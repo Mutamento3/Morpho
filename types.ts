@@ -2663,9 +2663,10 @@ export interface GroupProfile {
     chatPreset?: string;
     /**
      * 群回复生成模式：director = 一次调用生成整轮（默认，快、省 token）；
-     * roundRobin = 每位成员单独调用一次 API，按成员顺序逐个发言（更真实、防串号，token ≈ 成员数倍）。
+     * roundRobin = 每位成员单独调用一次 API，按成员顺序逐个发言（更真实、防串号，token ≈ 成员数倍）；
+     * meeting = 沿用双轮轮询，但取消角色1的 80 字硬限制，每次发言尽量保持 2-4 个气泡。
      */
-    replyMode?: 'director' | 'roundRobin';
+    replyMode?: 'director' | 'roundRobin' | 'meeting';
     /** @deprecated 旧版 [[TO: 名字]] 单次接力开关；双轮圆桌调度不再读取该字段。 */
     roundRobinHandoff?: boolean;
     /**

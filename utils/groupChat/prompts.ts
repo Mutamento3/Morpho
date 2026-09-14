@@ -241,6 +241,8 @@ export interface RoundRobinSlotContext {
     maxLines?: number;
     /** 固定成员槽位可用的整轮文字上限；未传则不限制字数 */
     maxChars?: number;
+    /** 会议模式：保持双轮调度，但各次发言尽量拆成 2-4 个气泡，不启用角色1字数压缩。 */
+    meetingMode?: boolean;
 }
 
 /** 群级自定义预设：真正留空时返回空串，不给模型暗塞默认风格。 */
@@ -267,12 +269,21 @@ export function buildRoundRobinInstruction(
     const slot = ctx.slot ?? 'opening';
     const maxLines = ctx.maxLines ?? 8;
     const maxChars = ctx.maxChars;
+    const meetingMode = ctx.meetingMode === true;
     const latestUserText = String(ctx.latestUserText ?? '').trim();
     const isSecondPass = slot === 'followup' || slot === 'closing';
     const isCompactTurn = typeof maxChars === 'number';
 
     // 处境交代：模型得知道自己站在回合的哪个位置，否则第二轮容易重复第一轮
-    const stance = isCompactTurn
+    const stance = meetingMode
+        ? slot === 'opening'
+            ? `你是本回合**第一轮第一个**开口的人：接住用户刚说的话，完整表达最重要的内容。尽量拆成 **2-4 行**。`
+            : slot === 'reply'
+            ? `你是本回合**第一轮第二个**发言的人：记录末尾已经包含先发言成员刚说完的话。\n围绕用户的本轮原话接话、反驳或补充，不要把对方随口延伸的内容误当成用户的新问题。尽量拆成 **2-4 行**。`
+            : slot === 'followup'
+            ? `现在进入**第二轮回应**：你已经完整看到用户原话和第一轮的全部发言。\n只补充新观点、回应最新一句或继续推进讨论，不要复述。尽量拆成 **2-4 行**；确实没有新内容时允许跳过。`
+            : `你是本回合**第二轮最后一个**发言的人：回应最新观点或补上最后一个有价值的信息，然后等待用户。不要复述、不要另开大话题。尽量拆成 **2-4 行**；确实没有新内容时允许跳过。`
+        : isCompactTurn
         ? slot === 'opening'
             ? `你是本回合**第一轮第一个**开口的人：接住用户刚说的话，直接说最重要的内容。目标 **1-3 行**。`
             : slot === 'reply'
@@ -309,7 +320,7 @@ ${stance}
 规则：
 
 1. ${rule1}
-2. 一行 = 一个气泡。短句多发几条 > 长句一坨；"嗯""哈哈哈"和单独一个表情包都是合法回复。**最多 ${maxLines} 行**，表情包也单独计作一个气泡，超出的部分会被系统直接截掉。${maxChars ? ` **本轮全部公开文字合计不得超过 ${maxChars} 个字符**（包括标点；表情包标记本身不计字数）。先压缩内容，再拆成 1-${maxLines} 个气泡；不要为了凑气泡重复同一句话。` : ''}
+2. 一行 = 一个气泡。短句多发几条 > 长句一坨；"嗯""哈哈哈"和单独一个表情包都是合法回复。**最多 ${maxLines} 行**，表情包也单独计作一个气泡，超出的部分会被系统直接截掉。${meetingMode ? ` 会议模式下尽量组织成 2-${maxLines} 个自然气泡，但不要为了凑数重复或拆碎完整句子。` : ''}${maxChars ? ` **本轮全部公开文字合计不得超过 ${maxChars} 个字符**（包括标点；表情包标记本身不计字数）。先压缩内容，再拆成 1-${maxLines} 个气泡；不要为了凑气泡重复同一句话。` : ''}
 3. **表情包**: 使用格式 \`[[SEND_EMOJI: 表情名称]]\`。**可用表情 (按分类)**: ${emojiContextStr}
 4. **私聊**: ${isCompactTurn ? `本轮禁止使用 \`[[PRIVATE: 内容]]\`，所有回复都在群内按上述字数与气泡限制发送。` : `罕见特例，默认不用。只有真的有重大、不便公开的话要单独对用户说时，才输出一条 \`[[PRIVATE: 内容]]\`（只进你和用户的私聊，群里不显示）。**严禁**把 PRIVATE 当"吐槽群友"的工具。`}
 5. 对话质量沿用你的私聊标准：拒绝套路化反应；想表达在乎就提一个只有你们之间才有的具体细节，而不是空泛的关心句；把名字遮住也能从语气认出这句话是你说的；情绪要有层次。

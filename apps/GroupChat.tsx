@@ -387,6 +387,7 @@ const ROUND_ROBIN_SECOND_PASS_MAX_LINES = 3;
 // 群设置里的第一个固定成员槽位默认承载 Gemini：每轮都压缩为 1-3 个气泡、80 字以内。
 const ROUND_ROBIN_PRIMARY_MEMBER_MAX_LINES = 3;
 const ROUND_ROBIN_PRIMARY_MEMBER_MAX_CHARS = 80;
+const MEETING_MODE_MAX_LINES = 4;
 
 type MemberApiTestState = {
     status: 'idle' | 'testing' | 'success' | 'error';
@@ -470,7 +471,7 @@ const GroupChat: React.FC = () => {
     const [tempMemberTimelineCap, setTempMemberTimelineCap] = useState<number>(DEFAULT_MEMBER_TIMELINE_CAP);
     const [tempChatPreset, setTempChatPreset] = useState('');
     const [tempChatBackground, setTempChatBackground] = useState('');
-    const [tempReplyMode, setTempReplyMode] = useState<'director' | 'roundRobin'>('director');
+    const [tempReplyMode, setTempReplyMode] = useState<'director' | 'roundRobin' | 'meeting'>('director');
     const [tempMemberBubbleIndependent, setTempMemberBubbleIndependent] = useState(false);
     const [tempUserBubbleThemeId, setTempUserBubbleThemeId] = useState<string>('');
     // 群内独立模型后端：两个写死的成员位（角色1 / 角色2），各自可配 url/apiKey/model。
@@ -1661,6 +1662,7 @@ ${memberTimeline || '(暂无互动记录)'}
         let tokenPrompt = 0;
         let tokenCompletion = 0;
         let roundMsgs = [...currentMsgs];
+        const meetingMode = activeGroup.replyMode === 'meeting';
         // 按群设置里的固定槽位判断“角色1”，不受 @/随机首发顺序影响。
         const primaryMemberId = activeGroup.members[0];
 
@@ -1670,12 +1672,14 @@ ${memberTimeline || '(暂无互动记录)'}
             slot: RoundRobinSlot,
         ): Promise<void> => {
             const isPrimaryMember = member.id === primaryMemberId;
-            const maxLines = isPrimaryMember
+            const maxLines = meetingMode
+                ? MEETING_MODE_MAX_LINES
+                : isPrimaryMember
                 ? ROUND_ROBIN_PRIMARY_MEMBER_MAX_LINES
                 : slot === 'opening' || slot === 'reply'
                     ? ROUND_ROBIN_FIRST_PASS_MAX_LINES
                     : ROUND_ROBIN_SECOND_PASS_MAX_LINES;
-            const maxChars = isPrimaryMember ? ROUND_ROBIN_PRIMARY_MEMBER_MAX_CHARS : undefined;
+            const maxChars = isPrimaryMember && !meetingMode ? ROUND_ROBIN_PRIMARY_MEMBER_MAX_CHARS : undefined;
             // 群内独立后端优先：memberApiConfigs[id] 有 key 就用它的 url/apiKey/model（缺哪样回落全局对应项）；
             // 否则回退角色自身的 chatApiConfig；再没有才用全局 apiConfig。
             const memberApi = activeGroup.memberApiConfigs?.[member.id];
@@ -1698,8 +1702,10 @@ ${memberTimeline || '(暂无互动记录)'}
                 latestUserText,
                 maxLines,
                 maxChars,
+                meetingMode,
             });
-            // 角色1要求严格 80 字以内，禁用会绕过字数/气泡闸门的 HTML 卡片扩展。
+            // 轮询模式的角色1仍执行 80 字硬限制；会议模式取消字数限制。
+            // 两种模式都禁用会绕过气泡数量闸门的 HTML 卡片扩展。
             const prompt = `${header}${memberBlock}\n\n${instruction}${isPrimaryMember ? '' : htmlPromptExt}\n`;
 
             const data = await completeGroupChatWithMcp({
@@ -1819,7 +1825,7 @@ ${memberTimeline || '(暂无互动记录)'}
         // 避免“用户没点加载历史 → AI 也只能看见 50 条”的耦合。
         const promptCap = Math.max(contextLimit, activeGroup.memberTimelineCap ?? DEFAULT_MEMBER_TIMELINE_CAP, GROUP_TOPIC_HOT_ZONE);
         const { messages: freshMsgs } = await DB.getRecentGroupMessagesWithCount(activeGroup.id, promptCap);
-        if (activeGroup?.replyMode === 'roundRobin') {
+        if (activeGroup?.replyMode === 'roundRobin' || activeGroup?.replyMode === 'meeting') {
             triggerRoundRobin(freshMsgs);
         } else {
             triggerDirector(freshMsgs);
@@ -2198,7 +2204,7 @@ ${memberTimeline || '(暂无互动记录)'}
                             placeholder="例如：像熟人群聊，多接彼此的话；少说教，不要轮流总结。留空则保持模型原汁原味。"
                             className="w-full min-h-28 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs leading-5 outline-none resize-y focus:bg-white focus:border-violet-300 transition-all placeholder:text-slate-300"
                         />
-                        <p className="mt-1.5 text-[9px] leading-4 text-slate-400">作用于本群的导演模式与双轮圆桌；只补充互动风格，不覆盖角色原设。随底部「保存修改」统一保存。</p>
+                        <p className="mt-1.5 text-[9px] leading-4 text-slate-400">作用于本群的导演模式、轮询模式与会议模式；只补充互动风格，不覆盖角色原设。随底部「保存修改」统一保存。</p>
                     </div>
 
                     {/* Reply Mode */}
@@ -2219,13 +2225,20 @@ ${memberTimeline || '(暂无互动记录)'}
                                 <div className="text-xs font-bold text-slate-700">轮询模式</div>
                                 <p className="text-[9px] text-slate-400 mt-1 leading-tight">两位成员分别使用自己的 API 完成两轮发言：第一轮各自完整回应，第二轮各自简短补充。你明确 @ 谁就由谁首发；没有 @ 时浏览器随机首发。每次发言都能看到本回合此前的完整消息，最多 4 次调用后停止。</p>
                             </div>
+                            <div
+                                onClick={() => setTempReplyMode('meeting')}
+                                className={`p-3 rounded-xl border cursor-pointer transition-all ${tempReplyMode === 'meeting' ? 'border-violet-400 bg-violet-50 ring-1 ring-violet-400' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                            >
+                                <div className="text-xs font-bold text-slate-700">会议模式</div>
+                                <p className="text-[9px] text-slate-400 mt-1 leading-tight">沿用双轮轮询与完整上下文，取消角色1每轮 80 字的硬限制；每位成员每次尽量拆成 2-4 个气泡，适合需要认真展开的讨论。</p>
+                            </div>
                         </div>
 
                         {/* 双轮圆桌说明：轮询模式固定执行，不再依赖模型输出点名标记 */}
-                        {tempReplyMode === 'roundRobin' && (
+                        {(tempReplyMode === 'roundRobin' || tempReplyMode === 'meeting') && (
                             <div className="mt-3 pt-3 border-t border-dashed border-slate-100">
-                                <div className="text-xs font-bold text-slate-700">双轮圆桌</div>
-                                <p className="text-[9px] text-slate-400 mt-0.5 leading-tight">固定顺序为「首发完整 → 另一位完整 → 首发精简 → 另一位精简」。第二轮确实无话可补时角色可以跳过；最后一次结束后等待你继续发言。</p>
+                                <div className="text-xs font-bold text-slate-700">{tempReplyMode === 'meeting' ? '双轮会议' : '双轮圆桌'}</div>
+                                <p className="text-[9px] text-slate-400 mt-0.5 leading-tight">固定顺序为「首发 → 另一位 → 首发回应 → 另一位收束」。第二轮确实无话可补时角色可以跳过；最后一次结束后等待你继续发言。</p>
                             </div>
                         )}
                     </div>

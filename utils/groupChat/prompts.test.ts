@@ -131,4 +131,22 @@ describe('buildRoundRobinInstruction 双轮圆桌', () => {
         expect(opening).toContain('表情包也单独计作一个气泡');
         expect(followup).toContain('不得超过 80 个字符');
     });
+
+    it('会议模式取消字数限制并尽量保持 2-4 个气泡', () => {
+        const opening = buildRoundRobinInstruction('阿澜', history, '无', {
+            slot: 'opening',
+            maxLines: 4,
+            meetingMode: true,
+        });
+        const closing = buildRoundRobinInstruction('小北', history, '无', {
+            slot: 'closing',
+            maxLines: 4,
+            meetingMode: true,
+        });
+        expect(opening).toContain('尽量拆成 **2-4 行**');
+        expect(opening).toContain('最多 4 行');
+        expect(opening).not.toContain('不得超过 80 个字符');
+        expect(closing).toContain('第二轮最后一个');
+        expect(closing).toContain('确实没有新内容时允许跳过');
+    });
 });
