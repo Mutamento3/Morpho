@@ -6,6 +6,8 @@ import type {
     UserProfile,
 } from '../types';
 import type { ImageGenerationDirective } from './imageGeneration';
+import { createImageGenerationError, readImageErrorResponse } from './imageGenerationError';
+import { recordImageGenerationFailure, recordImageGenerationSuccess, type ImageGenerationLogContext } from './imageGenerationLog';
 
 export const DEFAULT_NAI_IMAGE_API_URL = 'https://image.novelai.net';
 export const DEFAULT_NAI_IMAGE_MODEL = 'nai-diffusion-4-5-full';
@@ -261,11 +263,15 @@ export async function generateNovelAiCharacterImage(
     api: NovelAiImageGenerationApiConfig,
     char: CharacterProfile,
     request: ImageGenerationDirective,
+    logContext: ImageGenerationLogContext = {},
 ): Promise<Blob | string> {
     if (!api.apiKey.trim()) throw new Error('NovelAI API Key 尚未配置');
     const cfg = char.novelAiImageGeneration;
     if (!cfg?.enabled) throw new Error('当前角色尚未开启生图 2.0');
-    return generateNovelAiImage(api, cfg, request, cfg.referenceImageUrl ? [cfg.referenceImageUrl] : []);
+    return generateNovelAiImage(api, cfg, request, cfg.referenceImageUrl ? [cfg.referenceImageUrl] : [], {
+        feature: '单人聊天 · 生图 2.0',
+        ...logContext,
+    });
 }
 
 /** 通用 NAI 生成入口：供私聊角色与多人剧情剧场共用同一套全局 API。 */
@@ -274,45 +280,102 @@ export async function generateNovelAiImage(
     cfg: CharacterNovelAiImageGenerationConfig,
     request: ImageGenerationDirective,
     referenceImageUrls: string[] = [],
+    logContext: ImageGenerationLogContext = {},
+): Promise<Blob | string> {
+    const startedAt = Date.now();
+    const context: ImageGenerationLogContext = {
+        feature: logContext.feature || '生图 2.0',
+        provider: 'NovelAI 兼容接口',
+        model: api.model,
+        endpoint: novelAiGenerateEndpoint(api.baseUrl),
+        ...logContext,
+    };
+    try {
+        const image = await generateNovelAiImageRequest(api, cfg, request, referenceImageUrls);
+        if (!context.skipLog) recordImageGenerationSuccess(context, startedAt);
+        return image;
+    } catch (error) {
+        if (!context.skipLog) recordImageGenerationFailure(error, context, startedAt);
+        throw error;
+    }
+}
+
+async function generateNovelAiImageRequest(
+    api: NovelAiImageGenerationApiConfig,
+    cfg: CharacterNovelAiImageGenerationConfig,
+    request: ImageGenerationDirective,
+    referenceImageUrls: string[] = [],
 ): Promise<Blob | string> {
     if (!api.apiKey.trim()) throw new Error('NovelAI API Key 尚未配置');
     const urls = referenceImageUrls.map(url => url.trim()).filter(Boolean);
     const referenceImages = urls.length ? await Promise.all(urls.map(fetchReferenceImageBase64)) : [];
-    const response = await fetch(novelAiGenerateEndpoint(api.baseUrl), {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/zip, application/json, image/*',
-            Authorization: `Bearer ${api.apiKey.trim()}`,
-        },
-        body: JSON.stringify(buildNovelAiPayload(api, cfg, request, undefined, referenceImages)),
+    const endpoint = novelAiGenerateEndpoint(api.baseUrl);
+    let response: Response;
+    try {
+        response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/zip, application/json, image/*',
+                Authorization: `Bearer ${api.apiKey.trim()}`,
+            },
+            body: JSON.stringify(buildNovelAiPayload(api, cfg, request, undefined, referenceImages)),
+        });
+    } catch (cause) {
+        throw createImageGenerationError('浏览器未能连接 NovelAI 生图接口', {
+            provider: 'NovelAI 兼容接口', stage: '提交生图请求', endpoint, cause,
+        });
+    }
+    if (!response.ok) throw createImageGenerationError('NovelAI 生图请求失败', {
+        provider: 'NovelAI 兼容接口', stage: '提交生图请求', endpoint,
+        status: response.status, statusText: response.statusText, responseBody: await readImageErrorResponse(response),
     });
-    if (!response.ok) throw new Error(await readNovelAiError(response, `NovelAI 生图失败（HTTP ${response.status}）`));
 
     const contentType = (response.headers.get('content-type') || '').toLowerCase();
     if (contentType.startsWith('image/')) return await response.blob();
-    if (contentType.includes('json')) return await readJsonImage(response);
+    if (contentType.includes('json')) {
+        try { return await readJsonImage(response); }
+        catch (cause) {
+            throw createImageGenerationError('接口返回 JSON，但没有解析到图片', {
+                provider: 'NovelAI 兼容接口', stage: '解析图片响应', endpoint, cause,
+            });
+        }
+    }
 
     const archive = await JSZip.loadAsync(await response.arrayBuffer()).catch(() => null);
-    if (!archive) throw new Error('NovelAI 返回的不是可识别的图片或 ZIP');
+    if (!archive) throw createImageGenerationError('NovelAI 返回的不是可识别的图片或 ZIP', {
+        provider: 'NovelAI 兼容接口', stage: '解析图片响应', endpoint,
+    });
     const entry = Object.values(archive.files).find(file => !file.dir && /\.(?:png|jpe?g|webp)$/i.test(file.name));
-    if (!entry) throw new Error('NovelAI ZIP 中没有找到图片');
+    if (!entry) throw createImageGenerationError('NovelAI ZIP 中没有找到图片', {
+        provider: 'NovelAI 兼容接口', stage: '解析图片响应', endpoint,
+    });
     const blob = await entry.async('blob');
     return new Blob([blob], { type: imageMimeFromName(entry.name) });
 }
 
 async function fetchReferenceImageBase64(url: string): Promise<string> {
-    if (!/^https?:\/\//i.test(url)) throw new Error('参考图必须是 http(s) 图片直链');
+    if (!/^https?:\/\//i.test(url)) throw createImageGenerationError('参考图必须是 http(s) 图片直链', {
+        provider: 'NovelAI 兼容接口', stage: '读取参考图', endpoint: url,
+    });
     let response: Response;
     try { response = await fetch(url); }
     catch (error: any) {
-        throw new Error(error?.message === 'Load failed'
+        throw createImageGenerationError(error?.message === 'Load failed'
             ? '参考图能显示，但图片站禁止浏览器读取（CORS）。请换一个允许外链读取的图床直链'
-            : (error?.message || '读取参考图失败'));
+            : (error?.message || '读取参考图失败'), {
+            provider: 'NovelAI 兼容接口', stage: '读取参考图', endpoint: url, cause: error,
+        });
     }
-    if (!response.ok) throw new Error(`读取参考图失败（HTTP ${response.status}）`);
+    if (!response.ok) throw createImageGenerationError('读取参考图失败', {
+        provider: 'NovelAI 兼容接口', stage: '读取参考图', endpoint: url,
+        status: response.status, statusText: response.statusText, responseBody: await readImageErrorResponse(response),
+    });
     const blob = await response.blob();
-    if (blob.type && !blob.type.startsWith('image/')) throw new Error('参考图 URL 返回的不是图片');
+    if (blob.type && !blob.type.startsWith('image/')) throw createImageGenerationError('参考图 URL 返回的不是图片', {
+        provider: 'NovelAI 兼容接口', stage: '读取参考图', endpoint: url,
+        responseBody: `Content-Type: ${blob.type}`,
+    });
     const bytes = new Uint8Array(await blob.arrayBuffer());
     let binary = '';
     const chunk = 0x8000;

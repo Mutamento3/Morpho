@@ -75,6 +75,7 @@ import {
     extractNovelAiDirective,
     generateNovelAiCharacterImage,
 } from '../utils/novelAiImageGeneration';
+import { formatImageGenerationError, getImageGenerationErrorSummary } from '../utils/imageGenerationError';
 
 // ─── 云端情绪评估的安全网定时器（模块级，按角色）───
 // 为什么不放 hook 里：结论（emotionDone）是全局事件，用户切了角色、离开聊天页之后
@@ -1963,7 +1964,10 @@ export const useChatAI = ({
                                 })();
                             pendingGeneratedImage = { image, directive: parsedImage.directive };
                         } catch (error: any) {
-                            addToast(error?.message || '图片生成失败', 'error');
+                            addToast(getImageGenerationErrorSummary(error, '图片生成失败'), 'error');
+                            showError('生图失败 · 可复制排错详情', formatImageGenerationError(error, {
+                                feature: imageProvider === 'novelai' ? '单人聊天 · 生图 2.0' : '单人聊天 · 生图',
+                            }));
                         } finally {
                             setSearchStatus('');
                         }

@@ -30,6 +30,7 @@ import { ActiveMsgClient } from '../utils/activeMsgClient';
 import VersionInfo from '../components/settings/VersionInfo';
 import { isPushVapidReady } from '../utils/pushVapid';
 import ApiCallLogModal from '../components/settings/ApiCallLogModal';
+import ImageGenerationLogModal from '../components/settings/ImageGenerationLogModal';
 import { DB } from '../utils/db';
 import { getBackupReminderState, setBackupReminderIntervalDays, daysSinceLastBackup, BACKUP_REMINDER_MIN_DAYS, BACKUP_REMINDER_MAX_DAYS } from '../utils/backupReminder';
 import {
@@ -458,6 +459,7 @@ const Settings: React.FC = () => {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [showApiCallLog, setShowApiCallLog] = useState(false);
+  const [showImageGenerationLog, setShowImageGenerationLog] = useState(false);
   const [showRealtimeModal, setShowRealtimeModal] = useState(false);
   const [showMcpModal, setShowMcpModal] = useState(false);
   const [showMcpHelp, setShowMcpHelp] = useState(false);
@@ -2266,6 +2268,26 @@ const Settings: React.FC = () => {
             </svg>
         </button>
 
+        {/* 生图接口的返回格式、轮询与参考图错误和聊天 API 不同，单独留一份不含隐私的记录。 */}
+        <button
+            type="button"
+            onClick={() => setShowImageGenerationLog(true)}
+            className="w-full bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 flex items-center gap-3 active:scale-[0.99] transition-transform text-left"
+        >
+            <div className="p-2 bg-violet-100/60 rounded-xl text-violet-600 shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm12.75-11.25h.008v.008H16.5V8.25Z" />
+                </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">生图 API 调用记录</h2>
+                <p className="text-[11px] text-slate-400 mt-0.5">最近 5 天：生成结果 · 时间 · 功能来源 · 耗时 · 初步判断</p>
+            </div>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-300 shrink-0">
+                <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clipRule="evenodd" />
+            </svg>
+        </button>
+
         {/* 其他 API 区域 — 非 LLM 类（语音、写歌等），不会跟随预设切换 */}
         <SettingsSection
             title="其他 API"
@@ -3361,6 +3383,7 @@ const Settings: React.FC = () => {
 
       {/* API 调用记录页面 */}
       <ApiCallLogModal isOpen={showApiCallLog} onClose={() => setShowApiCallLog(false)} />
+      <ImageGenerationLogModal isOpen={showImageGenerationLog} onClose={() => setShowImageGenerationLog(false)} />
 
       {/* Preset Name Modal */}
       <Modal isOpen={showPresetModal} title="保存预设" onClose={() => setShowPresetModal(false)} footer={<button onClick={handleSavePreset} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存</button>}>

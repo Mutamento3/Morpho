@@ -35,6 +35,7 @@ import { resolveChatTheme } from '../utils/groupChat/theme';
 import type { ImageGenerationDirective } from '../utils/imageGeneration';
 import { replaceGeneratedCharacterImage } from '../utils/imageGeneration';
 import { generateNovelAiCharacterImage } from '../utils/novelAiImageGeneration';
+import { formatImageGenerationError, getImageGenerationErrorSummary } from '../utils/imageGenerationError';
 import ChatHeader from '../components/chat/ChatHeaderShell';
 import CharacterEntryTransition from '../components/chat/CharacterEntryTransition';
 import ChromeCssEditor from '../components/chat/ChromeCssEditor';
@@ -1455,7 +1456,9 @@ const Chat: React.FC = () => {
         };
         setRegeneratingGeneratedImageIds(previous => new Set(previous).add(message.id));
         try {
-            const image = await generateNovelAiCharacterImage(imageApi, char, directive);
+            const image = await generateNovelAiCharacterImage(imageApi, char, directive, {
+                feature: '单人聊天 · 生图 2.0 · 重新生成',
+            });
             const contextAtImage = messages.filter(item => item.id <= message.id);
             const ref = await replaceGeneratedCharacterImage(image, message, char, contextAtImage, directive);
             setMessages(previous => previous.map(item => item.id === message.id
@@ -1463,7 +1466,10 @@ const Chat: React.FC = () => {
                 : item));
             addToast('图片已重新生成并保存到角色相册', 'success');
         } catch (error: any) {
-            addToast(error?.message || '图片重新生成失败', 'error');
+            addToast(getImageGenerationErrorSummary(error, '图片重新生成失败'), 'error');
+            showError('图片重新生成失败 · 可复制排错详情', formatImageGenerationError(error, {
+                feature: '单人聊天 · 生图 2.0 · 重新生成',
+            }));
         } finally {
             setRegeneratingGeneratedImageIds(previous => {
                 const next = new Set(previous);
@@ -1471,7 +1477,7 @@ const Chat: React.FC = () => {
                 return next;
             });
         }
-    }, [apiConfig.novelAiImageGeneration, char, messages, regeneratingGeneratedImageIds, addToast]);
+    }, [apiConfig.novelAiImageGeneration, char, messages, regeneratingGeneratedImageIds, addToast, showError]);
 
     const handleImageSelect = async (file: File) => {
         try {

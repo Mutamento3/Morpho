@@ -7,6 +7,8 @@ import type {
 import type { Message } from '../types';
 import { DB } from './db';
 import { putImageBlob } from './blobRef';
+import { createImageGenerationError, readImageErrorResponse } from './imageGenerationError';
+import { recordImageGenerationFailure, recordImageGenerationSuccess, type ImageGenerationLogContext } from './imageGenerationLog';
 
 export const DEFAULT_IMAGE_API_URL = 'https://open.mxapi.org';
 export const DEFAULT_IMAGE_CHANNEL = 'default' as const;
@@ -146,6 +148,30 @@ export async function generateCharacterImage(
     api: ImageGenerationApiConfig,
     char: CharacterProfile,
     request: ImageGenerationDirective,
+    logContext: ImageGenerationLogContext = {},
+): Promise<Blob | string> {
+    const startedAt = Date.now();
+    const context: ImageGenerationLogContext = {
+        feature: logContext.feature || '单人聊天 · 生图',
+        provider: 'GPT Image 兼容接口',
+        model: api.model || 'gpt-image-2',
+        endpoint: api.baseUrl,
+        ...logContext,
+    };
+    try {
+        const image = await generateCharacterImageRequest(api, char, request);
+        if (!context.skipLog) recordImageGenerationSuccess(context, startedAt);
+        return image;
+    } catch (error) {
+        if (!context.skipLog) recordImageGenerationFailure(error, context, startedAt);
+        throw error;
+    }
+}
+
+async function generateCharacterImageRequest(
+    api: ImageGenerationApiConfig,
+    char: CharacterProfile,
+    request: ImageGenerationDirective,
 ): Promise<Blob | string> {
     if (!api.apiKey.trim()) throw new Error('生图 API Key 尚未配置');
     const cfg = char.imageGeneration;
@@ -159,7 +185,10 @@ export async function generateCharacterImage(
         Authorization: `Bearer ${api.apiKey.trim()}`,
         'X-Channel': api.channel || DEFAULT_IMAGE_CHANNEL,
     };
-    const response = await fetch(`${base}/api/v2/gpt-image-2`, {
+    const submitEndpoint = `${base}/api/v2/gpt-image-2`;
+    let response: Response;
+    try {
+        response = await fetch(submitEndpoint, {
             method: 'POST',
             headers,
             body: JSON.stringify({
@@ -171,10 +200,25 @@ export async function generateCharacterImage(
                 reference_images: referenceUrl ? [referenceUrl] : [],
             }),
         });
-    if (!response.ok) throw new Error(await readApiError(response, `提交生图任务失败（HTTP ${response.status}）`));
-    const submitted = await response.json();
+    } catch (cause) {
+        throw createImageGenerationError('浏览器未能连接生图接口', {
+            provider: 'GPT Image 兼容接口', stage: '提交生图任务', endpoint: submitEndpoint, cause,
+        });
+    }
+    if (!response.ok) throw createImageGenerationError('提交生图任务失败', {
+        provider: 'GPT Image 兼容接口', stage: '提交生图任务', endpoint: submitEndpoint,
+        status: response.status, statusText: response.statusText, responseBody: await readImageErrorResponse(response),
+    });
+    const submitted = await response.json().catch(cause => {
+        throw createImageGenerationError('生图接口返回的任务信息不是有效 JSON', {
+            provider: 'GPT Image 兼容接口', stage: '解析任务响应', endpoint: submitEndpoint, cause,
+        });
+    });
     const taskId = submitted?.data?.task_id;
-    if (!taskId) throw new Error(submitted?.message || 'MXAPI 未返回生图任务编号');
+    if (!taskId) throw createImageGenerationError(submitted?.message || '接口未返回生图任务编号', {
+        provider: 'GPT Image 兼容接口', stage: '解析任务响应', endpoint: submitEndpoint,
+        responseBody: JSON.stringify(submitted, null, 2).slice(0, 3000),
+    });
 
     const imageUrl = await pollMxApiImageTask(base, api.apiKey, String(taskId));
     return await downloadGeneratedImage(imageUrl);
@@ -269,23 +313,40 @@ export async function pollMxApiImageTask(
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         if (attempt > 0 && intervalMs > 0) await delay(intervalMs);
-        const response = await fetch(`${base}/api/v2/gpt-image/task?task_id=${encodeURIComponent(taskId)}`, {
-            headers: { Authorization: `Bearer ${apiKey.trim()}` },
+        const pollEndpoint = `${base}/api/v2/gpt-image/task?task_id=${encodeURIComponent(taskId)}`;
+        let response: Response;
+        try {
+            response = await fetch(pollEndpoint, { headers: { Authorization: `Bearer ${apiKey.trim()}` } });
+        } catch (cause) {
+            throw createImageGenerationError('浏览器未能查询生图任务', {
+                provider: 'GPT Image 兼容接口', stage: '轮询任务结果', endpoint: pollEndpoint, cause,
+            });
+        }
+        if (!response.ok) throw createImageGenerationError('查询生图任务失败', {
+            provider: 'GPT Image 兼容接口', stage: '轮询任务结果', endpoint: pollEndpoint,
+            status: response.status, statusText: response.statusText, responseBody: await readImageErrorResponse(response),
         });
-        if (!response.ok) throw new Error(await readApiError(response, `查询生图任务失败（HTTP ${response.status}）`));
         const data = await response.json();
         const task = data?.data;
         const status = String(task?.status || '').toLowerCase();
         if (status === 'completed' || status === 'success' || status === 'succeeded') {
             const imageUrl = task?.result?.images?.[0];
-            if (typeof imageUrl !== 'string' || !imageUrl) throw new Error('生图任务已完成，但响应中没有图片地址');
+            if (typeof imageUrl !== 'string' || !imageUrl) throw createImageGenerationError('生图任务已完成，但响应中没有图片地址', {
+                provider: 'GPT Image 兼容接口', stage: '解析任务结果', endpoint: pollEndpoint,
+                responseBody: JSON.stringify(data, null, 2).slice(0, 3000),
+            });
             return new URL(imageUrl, `${base}/`).toString();
         }
         if (status === 'failed' || status === 'error' || status === 'cancelled' || status === 'canceled') {
-            throw new Error(task?.error_msg || task?.error || data?.message || '生图任务失败');
+            throw createImageGenerationError(task?.error_msg || task?.error || data?.message || '生图任务失败', {
+                provider: 'GPT Image 兼容接口', stage: '服务端生成图片', endpoint: pollEndpoint,
+                responseBody: JSON.stringify(data, null, 2).slice(0, 3000),
+            });
         }
     }
-    throw new Error('生图等待超时，请稍后重试；若任务已扣费，可到 MXAPI 后台查看结果');
+    throw createImageGenerationError('生图等待超时，请稍后重试；若任务已扣费，可到接口后台查看结果', {
+        provider: 'GPT Image 兼容接口', stage: '轮询任务结果', endpoint: `${base}/api/v2/gpt-image/task`,
+    });
 }
 
 async function downloadGeneratedImage(imageUrl: string): Promise<Blob | string> {

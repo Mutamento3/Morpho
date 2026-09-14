@@ -2,6 +2,7 @@ import type { APIConfig, CharacterNovelAiImageGenerationConfig, CharacterProfile
 import { extractContent, safeResponseJson } from './safeApi';
 import type { ImageGenerationDirective } from './imageGeneration';
 import { DEFAULT_NAI_NEGATIVE_TAGS, DEFAULT_NAI_QUALITY_TAGS, generateNovelAiImage } from './novelAiImageGeneration';
+import { recordImageGenerationFailure, recordImageGenerationSuccess } from './imageGenerationLog';
 
 export interface StoryImageHistoryItem { role: 'user' | 'assistant'; content: string; }
 export interface StoryImagePromptPlan { visible: string[]; sceneTags: string; finalPrompt: string; }
@@ -574,7 +575,12 @@ export function buildStoryFramePackedPrompt(frame: StoryImageFramePlan): string 
     return `${main}, ${characters.length} distinct characters, fixed identity lineup from left to right, ${identityLine}`;
 }
 
-export async function generateStoryTheaterFrameImage(apiConfig: APIConfig, entry: StoryTheaterEntry, frame: StoryImageFramePlan | string): Promise<Blob | string> {
+export async function generateStoryTheaterFrameImage(
+    apiConfig: APIConfig,
+    entry: StoryTheaterEntry,
+    frame: StoryImageFramePlan | string,
+    skipLog = false,
+): Promise<Blob | string> {
     const novelApi = apiConfig.novelAiImageGeneration;
     if (!novelApi?.baseUrl?.trim() || !novelApi.apiKey?.trim() || !novelApi.model?.trim()) throw new Error('全局生图 2.0 的 URL、API Key 或模型尚未配置完整');
     const structuredCharacters = typeof frame === 'string' || !Array.isArray(frame.characters)
@@ -595,10 +601,34 @@ export async function generateStoryTheaterFrameImage(apiConfig: APIConfig, entry
                 center: character.center,
             })),
         };
-    return generateNovelAiImage({ ...novelApi, width: entry.imageGeneration?.width || 1216, height: entry.imageGeneration?.height || 832 }, storyNovelConfig(entry), directive);
+    return generateNovelAiImage(
+        { ...novelApi, width: entry.imageGeneration?.width || 1216, height: entry.imageGeneration?.height || 832 },
+        storyNovelConfig(entry),
+        directive,
+        [],
+        { feature: '见面 · 剧情配图', skipLog },
+    );
 }
 
 export async function generateStoryTheaterImages(options: GenerateStoryTheaterImageOptions): Promise<{ state: StoryImageState; frames: StoryGeneratedImageFrame[] }> {
+    const startedAt = Date.now();
+    const context = {
+        feature: '见面 · 剧情配图',
+        provider: '剧情分镜 + NovelAI 兼容接口',
+        model: `${options.apiConfig.model} → ${options.apiConfig.novelAiImageGeneration?.model || 'NovelAI'}`,
+        endpoint: options.apiConfig.novelAiImageGeneration?.baseUrl || options.apiConfig.baseUrl,
+    };
+    try {
+        const result = await generateStoryTheaterImagesRequest(options);
+        recordImageGenerationSuccess(context, startedAt);
+        return result;
+    } catch (error) {
+        recordImageGenerationFailure(error, context, startedAt);
+        throw error;
+    }
+}
+
+async function generateStoryTheaterImagesRequest(options: GenerateStoryTheaterImageOptions): Promise<{ state: StoryImageState; frames: StoryGeneratedImageFrame[] }> {
     if (!options.entry.imageGeneration?.enabled) throw new Error('本剧情尚未开启自动配图');
     const response = await fetch(`${options.apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST',
@@ -625,7 +655,7 @@ export async function generateStoryTheaterImages(options: GenerateStoryTheaterIm
     const frames: StoryGeneratedImageFrame[] = [];
     for (const plan of plans) {
         if (!plan?.finalPrompt) continue;
-        frames.push({ ...plan, image: await generateStoryTheaterFrameImage(options.apiConfig, options.entry, plan) });
+        frames.push({ ...plan, image: await generateStoryTheaterFrameImage(options.apiConfig, options.entry, plan, true) });
     }
     if (!frames.length) throw new Error('没有整理出可生成的剧情关键帧');
     return { state: storyboard.state, frames };

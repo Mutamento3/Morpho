@@ -55,6 +55,7 @@ import {
     type StoryImageState,
 } from '../../../utils/storyTheaterImage';
 import { putImageBlob, useBlobRefUrl } from '../../../utils/blobRef';
+import { formatImageGenerationError, getImageGenerationErrorSummary } from '../../../utils/imageGenerationError';
 
 interface Props {
     entry: StoryTheaterEntry;
@@ -322,7 +323,7 @@ const StoryRoundVisuals: React.FC<{
 };
 
 const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, onEdit, onOpenVectorMemory, onEntryChange }) => {
-    const { characters, userProfile, apiConfig, memoryPalaceConfig, remoteVectorConfig, updateCharacter, addToast } = useOS();
+    const { characters, userProfile, apiConfig, memoryPalaceConfig, remoteVectorConfig, updateCharacter, addToast, showError } = useOS();
     const threadId = storyTheaterThreadId(entry.id);
     const actors = useMemo(() => characters.filter(char => entry.characterIds.includes(char.id)), [characters, entry.characterIds]);
     const memoryActors = useMemo(() => {
@@ -393,11 +394,14 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             addToast('这张关键帧已经重新生成', 'success');
         } catch (error: any) {
             console.error('[StoryTheater] frame regeneration failed', error);
-            addToast(`重新生成失败：${error?.message || error}`, 'error');
+            addToast(`重新生成失败：${getImageGenerationErrorSummary(error)}`, 'error');
+            showError('剧情配图重新生成失败 · 可复制排错详情', formatImageGenerationError(error, {
+                feature: '见面 · 剧情模式 · 重新生成配图',
+            }));
         } finally {
             setRegeneratingFrameKey('');
         }
-    }, [addToast, apiConfig, entry, loadMessages, regeneratingFrameKey]);
+    }, [addToast, apiConfig, entry, loadMessages, regeneratingFrameKey, showError]);
 
     const generateStoryImagesForMessage = useCallback(async (message: Message) => {
         if (regeneratingFrameKey || message.role !== 'assistant') return;
@@ -451,11 +455,14 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             addToast('本轮配图已经补上', 'success');
         } catch (error: any) {
             console.error('[StoryTheater] manual image generation failed', error);
-            addToast(`生成本轮配图失败：${error?.message || error}`, 'error');
+            addToast(`生成本轮配图失败：${getImageGenerationErrorSummary(error)}`, 'error');
+            showError('剧情配图失败 · 可复制排错详情', formatImageGenerationError(error, {
+                feature: '见面 · 剧情模式 · 手动补配图',
+            }));
         } finally {
             setRegeneratingFrameKey('');
         }
-    }, [actors, addToast, apiConfig, entry, loadMessages, messages, promptIdentityName, regeneratingFrameKey]);
+    }, [actors, addToast, apiConfig, entry, loadMessages, messages, promptIdentityName, regeneratingFrameKey, showError]);
 
     useEffect(() => {
         setContextTokens(0);
@@ -875,7 +882,10 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                     await loadMessages();
                 } catch (imageError: any) {
                     console.error('[StoryTheater] image generation failed', imageError);
-                    addToast(`本轮剧情已生成，但配图失败：${imageError?.message || imageError}`, 'error');
+                    addToast(`本轮剧情已生成，但配图失败：${getImageGenerationErrorSummary(imageError)}`, 'error');
+                    showError('剧情已生成，但自动配图失败', formatImageGenerationError(imageError, {
+                        feature: '见面 · 剧情模式 · 自动配图',
+                    }));
                 } finally {
                     setMemoryStatus('');
                 }
@@ -895,7 +905,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             setSending(false);
             setRerollingId(null);
         }
-    }, [actors, addToast, affinityDrafts, affinityEnabled, apiConfig, applyActorMemoryPipeline, archiveIfNeeded, buildActorContexts, buildMaskMemoryContext, callCompletion, effectivePreset, entry, independentRecall, input, loadMessages, mask, promptIdentityName, saveCentralAndMirrors, selectedBooks, sending, threadId]);
+    }, [actors, addToast, affinityDrafts, affinityEnabled, apiConfig, applyActorMemoryPipeline, archiveIfNeeded, buildActorContexts, buildMaskMemoryContext, callCompletion, effectivePreset, entry, independentRecall, input, loadMessages, mask, promptIdentityName, saveCentralAndMirrors, selectedBooks, sending, showError, threadId]);
 
     const archivedCount = messages.filter(message => mirrorArchived(message, entry)).length;
     const pendingRetryInput = getPendingStoryRetryInput(messages);
