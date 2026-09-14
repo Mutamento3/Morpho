@@ -5,7 +5,7 @@ import AppIcon from '../components/os/AppIcon';
 import { DB } from '../utils/db';
 import { CharacterProfile, Anniversary, AppID, DailySchedule } from '../types';
 import { ScheduleHomeWidget, ScheduleFullscreenViewer } from '../components/schedule/ScheduleHomeWidget';
-import NowPlayingSquareWidget from '../components/os/NowPlayingSquareWidget';
+import AnniversarySquareWidget from '../components/os/AnniversarySquareWidget';
 import MobileGameHome from '../components/os/MobileGameHome';
 import TamagotchiHome from '../components/os/TamagotchiHome';
 import { getDailyScheduleForChar } from '../utils/dailySchedule';
@@ -1041,7 +1041,7 @@ const Launcher: React.FC = () => {
                                       className={`aspect-square min-w-0 ${layoutEditing ? 'launcher-edit-item' : ''}`}
                                   >
                                       {cell === 'music' ? (
-                                          <NowPlayingSquareWidget contentColor={contentColor} />
+                                          <AnniversarySquareWidget contentColor={contentColor} />
                                       ) : cell === 'appsA' ? (
                                           <AppQuadGrid apps={page2QuadA} openApp={openApp} editing={layoutEditing} />
                                       ) : cell === 'appsB' ? (
