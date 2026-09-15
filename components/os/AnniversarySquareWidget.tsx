@@ -14,6 +14,12 @@ type ChatStat = {
 type AnniversaryWidgetSettings = {
   characterId?: string;
   css?: string;
+  dateRanges?: Record<string, AnniversaryDateRange>;
+};
+
+type AnniversaryDateRange = {
+  startDate?: string;
+  endDate?: string;
 };
 
 const SETTINGS_ASSET_KEY = 'launcher_anniversary_widget_settings_v1';
@@ -42,13 +48,13 @@ const AI_PROMPT = `请为 Morpho 手机桌面的“相识纪念卡”写一套 C
    .morpho-anniversary-copy    “我们已经相识”
    .morpho-anniversary-days    天数大字
    .morpho-anniversary-unit    “DAYS / 天”
-   .morpho-anniversary-since   相识日期
+   .morpho-anniversary-since   起止日期
    .morpho-anniversary-edit    右上角编辑按钮
    .morpho-anniversary-orbit   装饰圆环
 5. 可在 .morpho-anniversary-widget 中定义并使用：
    --anniversary-accent（主色）
    --anniversary-soft（浅色）
-6. 必须兼顾 160px 左右的小尺寸，不要隐藏角色名、天数和相识日期。
+6. 必须兼顾 160px 左右的小尺寸，不要隐藏角色名、天数和起止日期。
 
 请直接输出一套完整 CSS。`;
 
@@ -84,6 +90,31 @@ const parseMemoryDate = (raw?: string): Date | null => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
+const parseDateInput = (raw?: string): Date | null => {
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const [year, month, day] = raw.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  if (
+    Number.isNaN(date.getTime())
+    || date.getFullYear() !== year
+    || date.getMonth() !== month - 1
+    || date.getDate() !== day
+  ) return null;
+  return date;
+};
+
+const normalizeDateRanges = (value: unknown): Record<string, AnniversaryDateRange> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, AnniversaryDateRange>>((result, [characterId, raw]) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return result;
+    const candidate = raw as AnniversaryDateRange;
+    const startDate = parseDateInput(candidate.startDate) ? candidate.startDate : undefined;
+    const endDate = parseDateInput(candidate.endDate) ? candidate.endDate : undefined;
+    if (startDate || endDate) result[characterId] = { startDate, endDate };
+    return result;
+  }, {});
+};
+
 const resolveKnownSince = (character: CharacterProfile, firstMessageAt?: number): Date => {
   const memoryDates = (character.memories || [])
     .map(memory => parseMemoryDate(memory.date))
@@ -104,6 +135,7 @@ const AnniversarySquareWidget: React.FC<{ contentColor: string }> = ({ contentCo
   const [stats, setStats] = useState<ChatStat[]>([]);
   const [settings, setSettings] = useState<AnniversaryWidgetSettings>({ css: BUILTIN_CSS });
   const [draftCharacterId, setDraftCharacterId] = useState('auto');
+  const [draftDateRanges, setDraftDateRanges] = useState<Record<string, AnniversaryDateRange>>({});
   const [draftCss, setDraftCss] = useState(BUILTIN_CSS);
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -124,6 +156,7 @@ const AnniversarySquareWidget: React.FC<{ contentColor: string }> = ({ contentCo
         setSettings({
           characterId: typeof next.characterId === 'string' ? next.characterId : undefined,
           css: typeof next.css === 'string' ? next.css : BUILTIN_CSS,
+          dateRanges: normalizeDateRanges(next.dateRanges),
         });
       })
       .catch(() => {});
@@ -170,14 +203,46 @@ const AnniversarySquareWidget: React.FC<{ contentColor: string }> = ({ contentCo
     return autoStat;
   }, [autoStat, settings.characterId, stats]);
 
-  const knownSince = useMemo(
+  const draftStat = useMemo(() => {
+    if (draftCharacterId !== 'auto') {
+      const manual = stats.find(item => item.character.id === draftCharacterId);
+      if (manual) return manual;
+    }
+    return autoStat;
+  }, [autoStat, draftCharacterId, stats]);
+
+  const automaticKnownSince = useMemo(
     () => selectedStat ? resolveKnownSince(selectedStat.character, selectedStat.firstMessageAt) : new Date(),
     [selectedStat],
   );
-  const days = Math.max(1, Math.floor((localDayNumber(new Date()) - localDayNumber(knownSince)) / 86400000) + 1);
+  const savedDateRange = selectedStat ? settings.dateRanges?.[selectedStat.character.id] : undefined;
+  const knownSince = parseDateInput(savedDateRange?.startDate) || automaticKnownSince;
+  const savedEndDate = parseDateInput(savedDateRange?.endDate);
+  const knownUntil = savedEndDate && localDayNumber(savedEndDate) >= localDayNumber(knownSince)
+    ? savedEndDate
+    : new Date();
+  const days = Math.max(1, Math.floor((localDayNumber(knownUntil) - localDayNumber(knownSince)) / 86400000) + 1);
+  const dateCaption = savedEndDate
+    ? `${formatDate(knownSince)} — ${formatDate(knownUntil)}`
+    : `SINCE ${formatDate(knownSince)}`;
+
+  const draftDateRange = draftStat ? draftDateRanges[draftStat.character.id] || {} : {};
+
+  const updateDraftDate = (field: keyof AnniversaryDateRange, value: string) => {
+    if (!draftStat) return;
+    const characterId = draftStat.character.id;
+    setDraftDateRanges(current => ({
+      ...current,
+      [characterId]: {
+        ...current[characterId],
+        [field]: value || undefined,
+      },
+    }));
+  };
 
   const openEditor = () => {
     setDraftCharacterId(settings.characterId || 'auto');
+    setDraftDateRanges(settings.dateRanges || {});
     setDraftCss(settings.css ?? BUILTIN_CSS);
     setOpen(true);
   };
@@ -186,6 +251,7 @@ const AnniversarySquareWidget: React.FC<{ contentColor: string }> = ({ contentCo
     const next: AnniversaryWidgetSettings = {
       characterId: draftCharacterId === 'auto' ? undefined : draftCharacterId,
       css: draftCss,
+      dateRanges: normalizeDateRanges(draftDateRanges),
     };
     setSettings(next);
     try { await DB.saveAssetRaw(SETTINGS_ASSET_KEY, next); } catch {}
@@ -254,7 +320,7 @@ const AnniversarySquareWidget: React.FC<{ contentColor: string }> = ({ contentCo
                 <span className="morpho-anniversary-days max-w-full truncate text-[38px] font-semibold leading-none">{days}</span>
                 <span className="morpho-anniversary-unit mb-[3px] text-[7px] font-bold uppercase tracking-[.16em] opacity-45">Days · 天</span>
               </span>
-              <span className="morpho-anniversary-since mt-1 block text-[7px] tracking-[.12em] opacity-42">SINCE {formatDate(knownSince)}</span>
+              <span className="morpho-anniversary-since mt-1 block text-[7px] tracking-[.09em] opacity-42">{dateCaption}</span>
             </span>
           </span>
         ) : (
@@ -293,6 +359,35 @@ const AnniversarySquareWidget: React.FC<{ contentColor: string }> = ({ contentCo
               <option value="auto">自动 · 聊天内容最多</option>
               {stats.map(item => <option key={item.character.id} value={item.character.id}>{item.character.name}</option>)}
             </select>
+
+            <div className="mt-4 rounded-2xl border border-[#eadde2] bg-white p-4">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[11px] font-bold text-slate-500">自定义起止日期</span>
+                <span className="text-[9px] text-slate-400">每个角色单独保存</span>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <label className="min-w-0">
+                  <span className="block text-[9px] font-semibold text-slate-400">开始日期</span>
+                  <input
+                    type="date"
+                    value={draftDateRange.startDate || ''}
+                    onChange={event => updateDraftDate('startDate', event.target.value)}
+                    className="mt-1.5 w-full min-w-0 rounded-xl border border-[#eadde2] bg-[#fcfaf9] px-2.5 py-2 text-[11px] font-semibold outline-none focus:border-[#b98598]"
+                  />
+                </label>
+                <label className="min-w-0">
+                  <span className="block text-[9px] font-semibold text-slate-400">结束日期</span>
+                  <input
+                    type="date"
+                    value={draftDateRange.endDate || ''}
+                    min={draftDateRange.startDate || undefined}
+                    onChange={event => updateDraftDate('endDate', event.target.value)}
+                    className="mt-1.5 w-full min-w-0 rounded-xl border border-[#eadde2] bg-[#fcfaf9] px-2.5 py-2 text-[11px] font-semibold outline-none focus:border-[#b98598]"
+                  />
+                </label>
+              </div>
+              <p className="mt-2 text-[9px] leading-relaxed text-slate-400">开始日期留空则读取该角色最早记忆；结束日期留空则计算至今天。</p>
+            </div>
 
             <button
               type="button"
