@@ -62,6 +62,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   Mihui: ({ className }) => <Heart className={className} weight="fill" />,
   Eat: ({ className }) => <BowlFood className={className} weight="fill" />,
   Faraway: ({ className }) => <PaperPlaneTilt className={className} weight="fill" />,
+  LimitedEncounter: ({ className }) => <Sparkle className={className} weight="fill" />,
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
@@ -76,6 +77,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Mihui, name: '密会', icon: 'Mihui', color: 'emerald' },
   { id: AppID.Eat, name: '吃了吗', icon: 'Eat', color: 'orange' },
   { id: AppID.Faraway, name: '走了没', icon: 'Faraway', color: 'amber' },
+  { id: AppID.LimitedEncounter, name: '他来了', icon: 'LimitedEncounter', color: 'pink' },
   // 家园不再做独立桌面图标，改从「小小窝 · 像素家园」里进入（openApp(AppID.WorldHome) 仍可渲染）
   // { id: AppID.Browser, name: '浏览器', icon: 'Browser', color: 'blue' }, // Hidden
   { id: AppID.Handbook, name: '手账本', icon: 'Handbook', color: 'fuchsia' },

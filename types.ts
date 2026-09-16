@@ -21,6 +21,7 @@ export enum AppID {
   Handbook = 'handbook', // 手账 — 跨角色聚合的生活留痕本（LLM 代笔 + 角色生活流陪伴）
   Eat = 'eat', // 吃了吗 — 冰箱存货、家常饮食安排与热量估算
   Faraway = 'faraway', // 走了没 — 角色外出、旅行来信与见闻归档
+  LimitedEncounter = 'limited_encounter', // 他来了 — 乙游式沉浸剧情与情绪表情
   QQBridge = 'qq_bridge', // QQ 桥接 — 通过 NapCat 把 QQ 私聊接入当前角色，共享 IndexedDB 上下文
 }
 
