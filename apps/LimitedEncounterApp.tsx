@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Microphone, PaperPlaneRight, Plus, SpinnerGap, User, X } from '@phosphor-icons/react';
+import { Check, PaperPlaneRight, Plus, SpeakerHigh, SpinnerGap, User, X } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { synthesizeSpeechDetailed } from '../utils/ttsRouter';
 import {
@@ -52,11 +52,15 @@ const LimitedEncounterApp: React.FC = () => {
   const [inputOpen, setInputOpen] = useState(false);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
-  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState<string | null>(null);
   const [roleOpen, setRoleOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [turnActionId, setTurnActionId] = useState<string | null>(null);
+  const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
+  const [editingBlocks, setEditingBlocks] = useState<LimitedBlock[]>([]);
   const [newRole, setNewRole] = useState({ name: '', prompt: '', worldview: '', background: '' });
   const scroller = useRef<HTMLDivElement>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     localStorage.setItem(STATE_KEY, JSON.stringify({ roleId, roles: customRoles, turns, hidden, voiceSources }));
@@ -72,38 +76,77 @@ const LimitedEncounterApp: React.FC = () => {
     ? (voiceSources[TWIN_VOICE_KEY] || voiceSources['shen-wenlan'] || voiceSources['shen-wenxu'] || '')
     : (voiceSources[role.id] || role.voiceSourceId || role.linkedCharacterId || '');
 
-  const submit = async (value: string) => {
+  const submit = async (value: string, replaceId?: string) => {
     const message = value.trim();
     if (!message || busy || !identity) return;
     setBusy(true); setText(''); setInputOpen(false);
+    const turnId = replaceId || `turn-${Date.now()}`;
+    const replaceIndex = replaceId ? turns.findIndex(turn => turn.id === replaceId) : -1;
+    const history = replaceIndex >= 0 ? turns.slice(0, replaceIndex) : turns;
+    if (!replaceId) {
+      setTurns(prev => [...prev, { id: turnId, at: Date.now(), userText: message, activeRole: role.name, blocks: [], suggestions: [] }]);
+    }
     try {
-      const result = await callLimitedEncounter(apiConfig, role, identity, turns, message);
+      const result = await callLimitedEncounter(apiConfig, role, identity, history, message);
       const nextRole = allRoles.find(item => item.id === result.activeRole || item.name === result.activeRole);
       if (nextRole) setRoleId(nextRole.id);
-      setTurns(prev => [...prev, { id: `turn-${Date.now()}`, at: Date.now(), userText: message, activeRole: nextRole?.name || role.name, blocks: result.blocks, suggestions: result.suggestions }]);
+      const completed: LimitedTurn = { id: turnId, at: Date.now(), userText: message, activeRole: nextRole?.name || role.name, blocks: result.blocks, suggestions: result.suggestions };
+      setTurns(prev => replaceId ? prev.map(turn => turn.id === replaceId ? completed : turn) : prev.map(turn => turn.id === turnId ? completed : turn));
     } catch (error: any) {
       addToast(error?.message || '这一幕没有接上，请再试一次。', 'error');
     } finally { setBusy(false); }
   };
 
-  const playVoice = async () => {
-    if (!latestDialogue || voiceBusy) return;
+  const playVoice = async (content: string, key: string) => {
+    if (!content.trim() || voiceBusy) return;
     const sourceId = selectedVoiceSourceId;
     const source = characters.find(char => char.id === sourceId) || characters.find(char => char.name === role.name);
     if (!source) {
       addToast('请先在人物按钮里为限定角色选择一个神经链接音色来源。', 'info');
       setRoleOpen(true); return;
     }
-    setVoiceBusy(true);
+    setVoiceBusy(key);
     try {
-      const { url } = await synthesizeSpeechDetailed(latestDialogue.text, source, apiConfig, {
+      const { url } = await synthesizeSpeechDetailed(content, source, apiConfig, {
         languageBoost: source.chatVoiceLang || undefined,
         groupId: apiConfig.minimaxGroupId || undefined,
         emotion: source.voiceProfile?.emotion,
       });
       const audio = new Audio(url); audio.onended = () => URL.revokeObjectURL(url); await audio.play();
     } catch (error: any) { addToast(error?.message || '语音生成失败', 'error'); }
-    finally { setVoiceBusy(false); }
+    finally { setVoiceBusy(null); }
+  };
+
+  const openTurnActions = (turnId: string) => {
+    if (busy || !turns.find(turn => turn.id === turnId)?.blocks.length) return;
+    setTurnActionId(turnId);
+  };
+  const startLongPress = (turnId: string) => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    longPressTimer.current = setTimeout(() => openTurnActions(turnId), 560);
+  };
+  const cancelLongPress = () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    longPressTimer.current = null;
+  };
+  const regenerateTurn = () => {
+    const target = turns.find(turn => turn.id === turnActionId);
+    setTurnActionId(null);
+    if (target?.userText) void submit(target.userText, target.id);
+  };
+  const beginEditTurn = () => {
+    const target = turns.find(turn => turn.id === turnActionId);
+    if (!target) return;
+    setEditingTurnId(target.id);
+    setEditingBlocks(target.blocks.map(block => ({ ...block })));
+    setTurnActionId(null);
+  };
+  const saveEditedTurn = () => {
+    if (!editingTurnId) return;
+    const cleaned = editingBlocks.map(block => ({ ...block, text: block.text.trim() })).filter(block => block.text) as LimitedBlock[];
+    if (!cleaned.length) return addToast('至少保留一段内容。', 'info');
+    setTurns(prev => prev.map(turn => turn.id === editingTurnId ? { ...turn, blocks: cleaned } : turn));
+    setEditingTurnId(null); setEditingBlocks([]);
   };
 
   const saveIdentity = () => {
@@ -130,28 +173,49 @@ const LimitedEncounterApp: React.FC = () => {
       : ({ ...prev, [role.id]: id }));
   };
 
+  const visibleTurns = hidden && latest
+    ? [{ ...latest, userText: '', blocks: latestDialogue ? [latestDialogue] : latest.blocks.slice(-1) }]
+    : turns;
+
   return <div className="le-app" style={{ backgroundImage: `linear-gradient(180deg,rgba(21,17,22,.12),rgba(18,13,17,.52)),url("${background}")` }}>
     <div className="le-topline">LIMITED ENCOUNTER · 01</div>
     <button className="le-back" onClick={closeApp}>‹</button>
     <div className="le-user-chip">{userAvatar ? <img src={userAvatar} /> : <span>{(identity?.name || userProfile.name || '你').slice(0, 1)}</span>}<b>{identity?.name || userProfile.name || '此刻的你'}</b></div>
     <div className="le-role-tools">
       <button className="le-role-chip" onClick={() => setRoleOpen(true)}><User size={15} weight="fill" /><span>限定角色 · {role.name}</span></button>
-      <button className="le-mic" onClick={playVoice} disabled={!latestDialogue || voiceBusy} aria-label="播放角色语音" title="使用私聊的 MiniMax / 鱼声配置朗读本轮台词">{voiceBusy ? <SpinnerGap className="le-spin" size={17} /> : <Microphone size={17} weight="fill" />}</button>
     </div>
 
     <div ref={scroller} className={`le-story ${hidden ? 'is-hidden' : ''}`}>
-      {turns.flatMap(turn => turn.blocks.map((block, index) => ({ ...block, key: `${turn.id}-${index}`, custom: role.custom })) ).filter((_, index, arr) => !hidden || index === arr.length - 1).map((block: any) => block.type === 'narration'
-        ? <p className="le-narration" key={block.key}>{block.text}</p>
-        : <div className="le-dialogue-row" key={block.key}>
-            <div className={`le-emotion ${block.custom ? 'pixel' : ''}`}>{block.custom ? (pixelEmotion[block.emotion] || pixelEmotion.默认) : <img src={emotionAsset(block.emotion)} />}</div>
-            <div className="le-dialogue"><small>{block.speaker || role.name}<i>{block.emotion}</i></small><div>{block.text}</div></div>
-          </div>)}
+      {visibleTurns.map(turn => {
+        const turnRole = allRoles.find(item => item.name === turn.activeRole) || role;
+        return <React.Fragment key={turn.id}>
+          {turn.userText && <div className="le-user-dialogue-row"><div className="le-user-dialogue">{turn.userText}</div></div>}
+          <div className="le-role-turn"
+            onPointerDown={() => startLongPress(turn.id)} onPointerUp={cancelLongPress}
+            onPointerCancel={cancelLongPress} onPointerMove={cancelLongPress} onPointerLeave={cancelLongPress}
+            onContextMenu={event => { event.preventDefault(); cancelLongPress(); openTurnActions(turn.id); }}>
+            {turn.blocks.map((block, index) => {
+              const key = `${turn.id}-${index}`;
+              return block.type === 'narration'
+                ? <p className="le-narration" key={key}>{block.text}</p>
+                : <div className="le-dialogue-row" key={key}>
+                    <div className={`le-emotion ${turnRole.custom ? 'pixel' : ''}`}>{turnRole.custom ? (pixelEmotion[block.emotion] || pixelEmotion.默认) : <img src={emotionAsset(block.emotion)} />}</div>
+                    <div className="le-dialogue"><small>{block.speaker || turnRole.name}<i>{block.emotion}</i></small><div>{block.text}</div><button className="le-bubble-voice" aria-label="播放这一句" title="播放这一句" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); void playVoice(block.text, key); }}>{voiceBusy === key ? <SpinnerGap className="le-spin" /> : <SpeakerHigh weight="fill" />}</button></div>
+                  </div>;
+            })}
+          </div>
+        </React.Fragment>;
+      })}
       {busy && <div className="le-thinking"><SpinnerGap className="le-spin" /> 正在续写这一幕……</div>}
     </div>
 
     <div className="le-actions"><button onClick={() => setInputOpen(true)}>输入</button><button onClick={() => setHidden(v => !v)}>{hidden ? '展开' : '隐藏'}</button></div>
 
     {inputOpen && <div className="le-sheet-shade" onClick={() => setInputOpen(false)}><section className="le-response-sheet" onClick={e => e.stopPropagation()}><header>你想怎么回应？<button onClick={() => setInputOpen(false)}><X /></button></header>{(latest?.suggestions || ['先问清楚他到底在打什么主意。', '笑着接住这句话，再慢慢靠近。', '临时换个完全出乎他预料的玩法。']).map((item, idx) => <button className="le-suggestion" key={`${item}-${idx}`} onClick={() => submit(item)}>{item}</button>)}<div className="le-compose"><textarea value={text} onChange={e => setText(e.target.value)} placeholder="或者，亲自写下这一轮的回应……" /><button onClick={() => submit(text)}><PaperPlaneRight weight="fill" /></button></div></section></div>}
+
+    {turnActionId && <div className="le-sheet-shade" onClick={() => setTurnActionId(null)}><section className="le-turn-actions" onClick={event => event.stopPropagation()}><div className="le-turn-actions-hint">这一轮想怎么处理？</div><button onClick={regenerateTurn}>重新生成整段</button><button onClick={beginEditTurn}>编辑整段内容</button><button className="muted" onClick={() => setTurnActionId(null)}>取消</button></section></div>}
+
+    {editingTurnId && <div className="le-modal-shade"><section className="le-edit-turn"><header><div><small>EDIT THIS TURN</small><h2>编辑这一轮</h2></div><button onClick={() => { setEditingTurnId(null); setEditingBlocks([]); }}><X /></button></header>{editingBlocks.map((block, index) => <label key={index}>{block.type === 'dialogue' ? `台词 · ${block.speaker || role.name}` : '叙述'}<textarea value={block.text} onChange={event => setEditingBlocks(prev => prev.map((item, i) => i === index ? { ...item, text: event.target.value } : item))} /></label>)}<button className="le-primary" onClick={saveEditedTurn}>保存这一轮</button></section></div>}
 
     {!identity && <div className="le-modal-shade"><section className="le-identity"><div className="le-modal-kicker">BEFORE THE STORY</div><h2>此刻的你</h2><p>默认跟随个人档案，也可以只为这段故事换一种身份。</p><label>姓名<input value={identityDraft.name} onChange={e => setIdentityDraft(v => ({ ...v, name: e.target.value }))} /></label><label>性别<input value={identityDraft.gender} onChange={e => setIdentityDraft(v => ({ ...v, gender: e.target.value }))} placeholder="可留空" /></label><label>基本人设<textarea value={identityDraft.persona} onChange={e => setIdentityDraft(v => ({ ...v, persona: e.target.value }))} placeholder="默认读取个人档案" /></label><div className="le-archetypes">{LABELS.map(([id, label]) => <button className={identityDraft.archetype === id ? 'active' : ''} key={id} onClick={() => setIdentityDraft(v => ({ ...v, archetype: id, persona: id === 'profile' ? userProfile.bio || '' : IDENTITY_ARCHETYPES[id] }))}>{label}</button>)}</div><button className="le-primary" onClick={saveIdentity}>以此刻的我，进入故事</button></section></div>}
 
