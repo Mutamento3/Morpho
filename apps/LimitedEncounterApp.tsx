@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, PaperPlaneRight, Plus, SpeakerHigh, SpinnerGap, User, X } from '@phosphor-icons/react';
+import { Check, PaperPlaneRight, SpeakerHigh, SpinnerGap, User, X } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { synthesizeSpeechDetailed } from '../utils/ttsRouter';
 import {
   BUILTIN_LIMITED_ROLES,
   callLimitedEncounter,
-  characterToLimitedRole,
   IDENTITY_ARCHETYPES,
   LIMITED_EMOTIONS,
   type LimitedIdentity,
@@ -14,6 +13,12 @@ import {
   type LimitedTurn,
 } from '../utils/limitedEncounter';
 import './LimitedEncounterApp.css';
+import type { CharacterProfile } from '../types';
+import { characterHasVoice } from '../utils/ttsRouter';
+import { fetchMiniMaxVoices, type MiniMaxVoiceItem } from '../utils/minimaxVoice';
+import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
+import VoiceDesignerApp from './VoiceDesignerApp';
+type VoiceProfile = NonNullable<CharacterProfile['voiceProfile']>;
 
 const STATE_KEY = 'morpho-limited-encounter-state-v1';
 const IDENTITY_KEY = 'morpho-limited-encounter-identity-v1';
@@ -37,14 +42,14 @@ const pixelEmotion: Record<string, string> = { 默认: '˙ᵕ˙', 开心: '◝(�
 
 const LimitedEncounterApp: React.FC = () => {
   const { closeApp, apiConfig, userProfile, characters, addToast } = useOS();
-  const initial = loadJson(STATE_KEY, { roleId: 'shen-wenlan', roles: [] as LimitedRole[], turns: [] as LimitedTurn[], hidden: false, voiceSources: {} as Record<string, string> });
-  const [customRoles, setCustomRoles] = useState<LimitedRole[]>(initial.roles || []);
+  const initial = loadJson(STATE_KEY, { roleId: 'shen-wenlan', roles: [] as LimitedRole[], turns: [] as LimitedTurn[], hidden: false, voiceSources: {} as Record<string, string>, voiceProfiles: {} as Record<string, VoiceProfile> });
+  const [customRoles] = useState<LimitedRole[]>(initial.roles || []);
   const allRoles = useMemo(() => [...BUILTIN_LIMITED_ROLES, ...customRoles], [customRoles]);
   const [roleId, setRoleId] = useState(initial.roleId || 'shen-wenlan');
   const role = allRoles.find(item => item.id === roleId) || BUILTIN_LIMITED_ROLES[0];
   const [turns, setTurns] = useState<LimitedTurn[]>(initial.turns || []);
   const [hidden, setHidden] = useState(Boolean(initial.hidden));
-  const [voiceSources, setVoiceSources] = useState<Record<string, string>>(initial.voiceSources || {});
+  const [voiceSources] = useState<Record<string, string>>(initial.voiceSources || {});
   const [identity, setIdentity] = useState<LimitedIdentity | null>(() => {
     try { return JSON.parse(localStorage.getItem(IDENTITY_KEY) || 'null'); } catch { return null; }
   });
@@ -54,20 +59,22 @@ const LimitedEncounterApp: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState<string | null>(null);
   const [roleOpen, setRoleOpen] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [voiceProfiles, setVoiceProfiles] = useState(initial.voiceProfiles);
+  const [designerOpen, setDesignerOpen] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState<MiniMaxVoiceItem[]>([]);
+  const [loadingVoices, setLoadingVoices] = useState(false);
   const [turnActionId, setTurnActionId] = useState<string | null>(null);
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const [editingBlocks, setEditingBlocks] = useState<LimitedBlock[]>([]);
-  const [newRole, setNewRole] = useState({ name: '', prompt: '', worldview: '', background: '' });
   const scroller = useRef<HTMLDivElement>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    localStorage.setItem(STATE_KEY, JSON.stringify({ roleId, roles: customRoles, turns, hidden, voiceSources }));
-  }, [roleId, customRoles, turns, hidden, voiceSources]);
+    localStorage.setItem(STATE_KEY, JSON.stringify({ roleId, roles: customRoles, turns, hidden, voiceSources, voiceProfiles }));
+  }, [roleId, customRoles, turns, hidden, voiceSources, voiceProfiles]);
   useEffect(() => { scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' }); }, [turns.length, busy]);
 
-  const latest = turns.at(-1);
+  const latest = turns[turns.length - 1];
   const latestDialogue = [...(latest?.blocks || [])].reverse().find((block): block is Extract<LimitedBlock, { type: 'dialogue' }> => block.type === 'dialogue');
   const background = baseAsset(role.background || '/assets/limited-encounter/custom-default.jpg');
   const userAvatar = userProfile.avatar || '';
@@ -75,6 +82,35 @@ const LimitedEncounterApp: React.FC = () => {
   const selectedVoiceSourceId = isBuiltinTwin
     ? (voiceSources[TWIN_VOICE_KEY] || voiceSources['shen-wenlan'] || voiceSources['shen-wenxu'] || '')
     : (voiceSources[role.id] || role.voiceSourceId || role.linkedCharacterId || '');
+
+  const voiceKey = isBuiltinTwin ? TWIN_VOICE_KEY : role.id;
+  const legacySource = characters.find(char => char.id === selectedVoiceSourceId) || characters.find(char => char.name === role.name);
+  const voiceProfile = voiceProfiles[voiceKey] ?? legacySource?.voiceProfile ?? {};
+  const voiceCharacter: CharacterProfile = {
+    id: voiceKey, name: isBuiltinTwin ? '双胞胎' : role.name,
+    avatar: role.avatar, description: '', systemPrompt: role.systemPrompt,
+    memories: [], voiceProfile,
+  };
+  // Copy legacy bindings once, then keep the app's voice independent of linked characters.
+  useEffect(() => {
+    if (!voiceProfiles[voiceKey] && legacySource?.voiceProfile) {
+      setVoiceProfiles(prev => prev[voiceKey] ? prev : { ...prev, [voiceKey]: { ...legacySource.voiceProfile } });
+    }
+  }, [voiceKey, voiceProfiles, legacySource]);
+  const updateVoice = (patch: Partial<VoiceProfile>) => {
+    setVoiceProfiles(prev => ({ ...prev, [voiceKey]: { ...voiceProfile, ...prev[voiceKey], ...patch } }));
+  };
+  const loadVoices = async () => {
+    if (loadingVoices) return;
+    setLoadingVoices(true);
+    try {
+      const result = await fetchMiniMaxVoices(resolveMiniMaxApiKey(apiConfig));
+      const voices = [...result.voice_cloning, ...result.voice_generation, ...result.system_voice];
+      setAvailableVoices(voices);
+      addToast(voices.length ? '音色已拉取，请选择。' : '暂未查询到可用音色，也可以直接填写 voice_id。', 'info');
+    } catch (error: any) { addToast(error?.message || '音色拉取失败', 'error'); }
+    finally { setLoadingVoices(false); }
+  };
 
   const submit = async (value: string, replaceId?: string) => {
     const message = value.trim();
@@ -99,10 +135,9 @@ const LimitedEncounterApp: React.FC = () => {
 
   const playVoice = async (content: string, key: string) => {
     if (!content.trim() || voiceBusy) return;
-    const sourceId = selectedVoiceSourceId;
-    const source = characters.find(char => char.id === sourceId) || characters.find(char => char.name === role.name);
-    if (!source) {
-      addToast('请先在人物按钮里为限定角色选择一个神经链接音色来源。', 'info');
+    const source = voiceCharacter;
+    if (!characterHasVoice(source, apiConfig)) {
+      addToast('请先在限定人物中配置当前语音服务的音色。', 'info');
       setRoleOpen(true); return;
     }
     setVoiceBusy(key);
@@ -155,24 +190,6 @@ const LimitedEncounterApp: React.FC = () => {
     if (!turns.length) setTurns([{ id: `prologue-${Date.now()}`, at: Date.now(), userText: '', activeRole: '序章', blocks: [{ type: 'narration', text: makePrologue(next.name) }], suggestions: ['按约定的时间出门。', '先发消息问他到了没有。', '临出门又换了一套衣服。'] }]);
   };
 
-  const addLinkedRole = (charId: string) => {
-    const char = characters.find(item => item.id === charId); if (!char) return;
-    const next = characterToLimitedRole(char);
-    setCustomRoles(prev => [...prev.filter(item => item.id !== next.id), next]); setRoleId(next.id); setRoleOpen(false);
-  };
-
-  const saveFreeRole = () => {
-    if (!newRole.name.trim()) return;
-    const created: LimitedRole = { id: `custom:${Date.now()}`, name: newRole.name.trim(), avatar: '', background: newRole.background || '/assets/limited-encounter/custom-default.jpg', systemPrompt: newRole.prompt || `你是${newRole.name}。`, worldview: newRole.worldview, custom: true };
-    setCustomRoles(prev => [...prev, created]); setRoleId(created.id); setCreateOpen(false); setRoleOpen(false);
-  };
-
-  const setVoiceSource = (id: string) => {
-    setVoiceSources(prev => isBuiltinTwin
-      ? ({ ...prev, [TWIN_VOICE_KEY]: id, 'shen-wenlan': id, 'shen-wenxu': id })
-      : ({ ...prev, [role.id]: id }));
-  };
-
   const visibleTurns = hidden && latest
     ? [{ ...latest, userText: '', blocks: latestDialogue ? [latestDialogue] : latest.blocks.slice(-1) }]
     : turns;
@@ -219,9 +236,24 @@ const LimitedEncounterApp: React.FC = () => {
 
     {!identity && <div className="le-modal-shade"><section className="le-identity"><div className="le-modal-kicker">BEFORE THE STORY</div><h2>此刻的你</h2><p>默认跟随个人档案，也可以只为这段故事换一种身份。</p><label>姓名<input value={identityDraft.name} onChange={e => setIdentityDraft(v => ({ ...v, name: e.target.value }))} /></label><label>性别<input value={identityDraft.gender} onChange={e => setIdentityDraft(v => ({ ...v, gender: e.target.value }))} placeholder="可留空" /></label><label>基本人设<textarea value={identityDraft.persona} onChange={e => setIdentityDraft(v => ({ ...v, persona: e.target.value }))} placeholder="默认读取个人档案" /></label><div className="le-archetypes">{LABELS.map(([id, label]) => <button className={identityDraft.archetype === id ? 'active' : ''} key={id} onClick={() => setIdentityDraft(v => ({ ...v, archetype: id, persona: id === 'profile' ? userProfile.bio || '' : IDENTITY_ARCHETYPES[id] }))}>{label}</button>)}</div><button className="le-primary" onClick={saveIdentity}>以此刻的我，进入故事</button></section></div>}
 
-    {roleOpen && <div className="le-modal-shade" onClick={() => setRoleOpen(false)}><section className="le-role-modal" onClick={e => e.stopPropagation()}><header><div><small>CAST</small><h2>限定人物</h2></div><button onClick={() => setRoleOpen(false)}><X /></button></header><div className="le-role-list">{allRoles.map(item => <button className={item.id === role.id ? 'active' : ''} key={item.id} onClick={() => { setRoleId(item.id); setRoleOpen(false); }}><span style={{ backgroundImage: `url("${baseAsset(item.avatar || item.background)}")` }} />{item.name}{item.id === role.id && <Check weight="bold" />}</button>)}</div><label className="le-voice-select">{isBuiltinTwin ? '双胞胎共用语音' : '语音来源'}<select value={selectedVoiceSourceId} onChange={e => setVoiceSource(e.target.value)}><option value="">选择神经链接角色的 MiniMax / 鱼声配置</option>{characters.map(char => <option value={char.id} key={char.id}>{char.name}</option>)}</select></label><button className="le-add" onClick={() => setCreateOpen(true)}><Plus />自由创建角色</button><div className="le-linked"><b>从神经链接添加</b>{characters.map(char => <button key={char.id} onClick={() => addLinkedRole(char.id)}>{char.name}</button>)}</div></section></div>}
+    {roleOpen && <div className="le-modal-shade" onClick={() => setRoleOpen(false)}><section className="le-role-modal" onClick={e => e.stopPropagation()}>
+      <header><div><small>CAST</small><h2>限定人物</h2></div><button aria-label="关闭限定人物" onClick={() => setRoleOpen(false)}><X /></button></header>
+      <div className="le-role-list">{allRoles.map(item => <button className={item.id === role.id ? 'active' : ''} key={item.id} onClick={() => setRoleId(item.id)}><span style={{ backgroundImage: 'url("' + baseAsset(item.avatar || item.background) + '")' }} />{item.name}{item.id === role.id && <Check weight="bold" />}</button>)}</div>
+      <p className="le-voice-hint">{isBuiltinTwin ? '沈闻澜与沈闻序共用以下声线。' : '当前角色声线。'}修改后自动保存。</p>
+      <section className="le-voice-card">
+        <div className="le-voice-heading"><b><SpeakerHigh /> MiniMax 音色设定</b><div><button onClick={() => setDesignerOpen(true)}>捏声音</button><button disabled={loadingVoices} onClick={() => void loadVoices()}>{loadingVoices ? '拉取中…' : '拉取可用音色'}</button></div></div>
+        <p>使用总设置中的语音服务配置。已有 voice_id 可直接填写。</p>
+        <input aria-label="MiniMax voice_id" placeholder="voice_id（可直接贴）" value={voiceProfile.voiceId || ''} onChange={e => updateVoice({ voiceId: e.target.value.trim(), voiceName: '', timberWeights: undefined })} />
+        {availableVoices.length > 0 && <select aria-label="可用音色" value="" onChange={e => { const voice = availableVoices.find(v => v.voice_id === e.target.value); if (voice) updateVoice({ voiceId: voice.voice_id, voiceName: voice.voice_name || '', timberWeights: undefined }); }}><option value="">选择已拉取的音色</option>{availableVoices.map((v, i) => <option key={v.voice_id + i} value={v.voice_id}>{v.voice_name || v.voice_id}</option>)}</select>}
+        {voiceProfile.timberWeights?.length ? <p>已应用混合音色：{voiceProfile.voiceName}，可在「捏声音」中微调。</p> : null}
+        <input aria-label="MiniMax TTS 模型" placeholder="speech-2.8-hd" value={voiceProfile.model ?? 'speech-2.8-hd'} onChange={e => updateVoice({ model: e.target.value })} />
+        <div className="le-fish-card"><b>鱼声 FISH 音色</b><input aria-label="鱼声音色" placeholder="reference_id 或 fish.audio 链接" value={voiceProfile.fishReferenceId || ''} onChange={e => updateVoice({ fishReferenceId: e.target.value.trim() })} /><p>在总设置中选择「鱼声 Fish」后使用此音色，与 MiniMax 音色分别保存。</p></div>
+        <label className="le-speed">语速 <span>{(voiceProfile.speed ?? 1).toFixed(2)}×</span><input aria-label="语速" type="range" min="0.5" max="1.5" step="0.05" value={voiceProfile.speed ?? 1} onChange={e => updateVoice({ speed: Number(e.target.value) })} /></label>
+        <p>1.0 为正常语速，数值越小越慢。MiniMax 与鱼声共用。</p>
+      </section>
+    </section></div>}
+    {designerOpen && <div className="le-voice-designer"><VoiceDesignerApp character={voiceCharacter} onClose={() => setDesignerOpen(false)} onApply={profile => { updateVoice(profile); setDesignerOpen(false); }} /></div>}
 
-    {createOpen && <div className="le-modal-shade"><section className="le-role-modal le-create"><header><h2>自由创建</h2><button onClick={() => setCreateOpen(false)}><X /></button></header><input placeholder="角色名" value={newRole.name} onChange={e => setNewRole(v => ({ ...v, name: e.target.value }))} /><textarea placeholder="核心设定" value={newRole.prompt} onChange={e => setNewRole(v => ({ ...v, prompt: e.target.value }))} /><textarea placeholder="世界观 / 补充设定" value={newRole.worldview} onChange={e => setNewRole(v => ({ ...v, worldview: e.target.value }))} /><label className="le-upload">上传聊天背景<input type="file" accept="image/*" onChange={e => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => setNewRole(v => ({ ...v, background: String(reader.result || '') })); reader.readAsDataURL(file); }} /></label><button className="le-primary" onClick={saveFreeRole}>保存并进入</button></section></div>}
   </div>;
 };
 

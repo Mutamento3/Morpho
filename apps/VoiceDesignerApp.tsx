@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SpeakerHigh, PlayCircle, StopCircle, Plus, Trash, FloppyDisk, Lock, Check, Warning } from '@phosphor-icons/react';
+import type { CharacterProfile } from '../types';
 import { useOS } from '../context/OSContext';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { fetchMiniMaxVoices, MiniMaxVoiceItem } from '../utils/minimaxVoice';
@@ -54,9 +55,14 @@ const fetchRemoteAudioBlob = async (sourceUrl: string): Promise<Blob> => {
 
 type DesignerTab = 'mix' | 'modify';
 
-const VoiceDesignerApp: React.FC = () => {
+interface VoiceDesignerProps {
+  character?: CharacterProfile;
+  onApply?: (profile: NonNullable<CharacterProfile['voiceProfile']>) => void;
+  onClose?: () => void;
+}
+const VoiceDesignerApp: React.FC<VoiceDesignerProps> = ({ character, onApply, onClose }) => {
   const { closeApp, apiConfig, addToast, characters, activeCharacterId, updateCharacter } = useOS();
-  const selectedChar = useMemo(() => characters.find(c => c.id === activeCharacterId) || characters[0], [characters, activeCharacterId]);
+  const selectedChar = useMemo(() => character || characters.find(c => c.id === activeCharacterId) || characters[0], [character, characters, activeCharacterId]);
 
   // ── Available voices (for picker) ──
   const [availableVoices, setAvailableVoices] = useState<MiniMaxVoiceItem[]>([]);
@@ -372,7 +378,8 @@ const VoiceDesignerApp: React.FC = () => {
         pitch: pitch !== 0 ? pitch : undefined,
       },
     };
-    updateCharacter(selectedChar.id, updatedProfile);
+    if (onApply) onApply(updatedProfile.voiceProfile);
+    else updateCharacter(selectedChar.id, updatedProfile);
     addToast(`已将捏好的声音应用到「${selectedChar.name}」`, 'success');
   };
 
@@ -411,7 +418,7 @@ const VoiceDesignerApp: React.FC = () => {
           <button onClick={handleApply} className="text-[10px] px-3 py-1.5 rounded-full bg-violet-500 text-white font-bold flex items-center gap-1 active:scale-95 transition-transform">
             <FloppyDisk size={12} weight="bold" /> 应用
           </button>
-          <button onClick={() => closeApp()} className="text-[10px] px-3 py-1.5 rounded-full bg-slate-100 text-slate-600 font-bold">关闭</button>
+          <button onClick={() => (onClose || closeApp)()} className="text-[10px] px-3 py-1.5 rounded-full bg-slate-100 text-slate-600 font-bold">关闭</button>
         </div>
       </header>
 

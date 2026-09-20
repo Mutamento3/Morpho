@@ -25,3 +25,21 @@
 .le-story.is-hidden .le-role-turn{margin-top:48vh}
 .le-story.is-hidden .le-dialogue-row{margin-top:0}
 @media(max-width:430px){.le-user-dialogue-row{padding-left:54px}.le-user-dialogue{max-width:88%}}
+
+/* Shared voice settings for the limited cast. */
+.le-role-modal{box-sizing:border-box;max-height:calc(100% - 16px)}
+.le-voice-hint{font-size:11px;color:#8b707c;margin:14px 0 10px}
+.le-voice-card{padding:16px;border-radius:22px;background:#fff;color:#53616c;border:1px solid #eee9ed}
+.le-voice-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}
+.le-voice-heading b{display:flex;align-items:center;gap:5px;color:#438e77;font-size:12px}
+.le-voice-heading>div{display:flex;gap:6px}
+.le-voice-heading button{padding:8px;border:0;border-radius:9px;background:#edf9f3;color:#32785f;font-size:11px;font-weight:700}
+.le-voice-heading button:first-child{background:#f5f0ff;color:#794caf}
+.le-voice-heading button:disabled{opacity:.5}
+.le-voice-card p{font-size:11px;line-height:1.7;color:#89909e;margin:12px 0}
+.le-voice-card input:not([type=range]),.le-voice-card select{display:block;width:100%;min-width:0;box-sizing:border-box;margin:10px 0;padding:11px 12px;border:1px solid #e1e5ec;border-radius:16px;background:#f8f9fb;color:#475363;font:12px/1.5 system-ui}
+.le-fish-card{margin:14px 0;padding:12px;border:1px solid #d6ecf7;background:#f9fcff;border-radius:18px}
+.le-fish-card b{font-size:11px;color:#3e89b5}.le-fish-card p{margin-bottom:0}
+.le-speed{display:block;font-size:12px;color:#89909e}.le-speed span{float:right;font-family:monospace}
+.le-speed input{display:block;width:100%;margin:14px 0;accent-color:#dca5b8}
+.le-voice-designer{position:absolute;inset:0;z-index:30;color:#475363;font-family:system-ui}
