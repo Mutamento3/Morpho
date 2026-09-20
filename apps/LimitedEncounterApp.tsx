@@ -217,7 +217,7 @@ const LimitedEncounterApp: React.FC = () => {
                 ? <p className="le-narration" key={key}>{block.text}</p>
                 : <div className="le-dialogue-row" key={key}>
                     <div className={`le-emotion ${turnRole.custom ? 'pixel' : ''}`}>{turnRole.custom ? (pixelEmotion[block.emotion] || pixelEmotion.默认) : <img src={emotionAsset(block.emotion)} />}</div>
-                    <div className="le-dialogue"><small>{block.speaker || turnRole.name}<i>{block.emotion}</i></small><div>{block.text}</div><button className="le-bubble-voice" aria-label="播放这一句" title="播放这一句" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); void playVoice(block.text, key); }}>{voiceBusy === key ? <SpinnerGap className="le-spin" /> : <SpeakerHigh weight="fill" />}</button></div>
+                    <div className="le-dialogue"><small>{block.speaker || turnRole.name}</small><div>{block.text}</div><button className="le-bubble-voice" aria-label="播放这一句" title="播放这一句" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); void playVoice(block.text, key); }}>{voiceBusy === key ? <SpinnerGap className="le-spin" /> : <SpeakerHigh weight="fill" />}</button></div>
                   </div>;
             })}
           </div>
