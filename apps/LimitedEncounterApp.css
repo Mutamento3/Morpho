@@ -43,3 +43,10 @@
 .le-speed{display:block;font-size:12px;color:#89909e}.le-speed span{float:right;font-family:monospace}
 .le-speed input{display:block;width:100%;margin:14px 0;accent-color:#dca5b8}
 .le-voice-designer{position:absolute;inset:0;z-index:30;color:#475363;font-family:system-ui}
+
+.le-restart{width:100%;margin-top:14px;padding:11px;border:1px solid #d8b4c2;border-radius:14px;background:#fff8;color:#9b526c;font:600 12px system-ui}
+.le-turn-actions button.le-danger,.le-confirm-buttons button.le-danger{color:#a23f5b;background:#fbe8ee}
+.le-confirm-shade{z-index:25}.le-confirm-description{font-size:13px;line-height:1.8;color:#876b77;margin:14px 0 20px}
+.le-confirm-buttons{display:flex;gap:10px}.le-confirm-buttons button{flex:1;padding:12px;border:0;border-radius:14px;background:#fff9;color:#66515b;font-weight:700}
+.le-restart:disabled,.le-turn-actions button:disabled,.le-confirm-buttons button:disabled{opacity:.45}
+.le-user-dialogue-row{touch-action:pan-y;-webkit-touch-callout:none}

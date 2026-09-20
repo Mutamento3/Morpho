@@ -5,6 +5,7 @@ import { synthesizeSpeechDetailed } from '../utils/ttsRouter';
 import {
   BUILTIN_LIMITED_ROLES,
   callLimitedEncounter,
+  isLimitedTwin,
   IDENTITY_ARCHETYPES,
   LIMITED_EMOTIONS,
   type LimitedIdentity,
@@ -42,10 +43,12 @@ const pixelEmotion: Record<string, string> = { 默认: '˙ᵕ˙', 开心: '◝(�
 
 const LimitedEncounterApp: React.FC = () => {
   const { closeApp, apiConfig, userProfile, characters, addToast } = useOS();
-  const initial = loadJson(STATE_KEY, { roleId: 'shen-wenlan', roles: [] as LimitedRole[], turns: [] as LimitedTurn[], hidden: false, voiceSources: {} as Record<string, string>, voiceProfiles: {} as Record<string, VoiceProfile> });
+  const initial = loadJson(STATE_KEY, { roleId: 'shen-wenlan', actualRoleId: '', roles: [] as LimitedRole[], turns: [] as LimitedTurn[], hidden: false, voiceSources: {} as Record<string, string>, voiceProfiles: {} as Record<string, VoiceProfile> });
   const [customRoles] = useState<LimitedRole[]>(initial.roles || []);
   const allRoles = useMemo(() => [...BUILTIN_LIMITED_ROLES, ...customRoles], [customRoles]);
   const [roleId, setRoleId] = useState(initial.roleId || 'shen-wenlan');
+  const [actualRoleId, setActualRoleId] = useState(initial.actualRoleId || initial.roleId || 'shen-wenlan');
+  const actualRole = allRoles.find(item => item.id === actualRoleId) || BUILTIN_LIMITED_ROLES[0];
   const role = allRoles.find(item => item.id === roleId) || BUILTIN_LIMITED_ROLES[0];
   const [turns, setTurns] = useState<LimitedTurn[]>(initial.turns || []);
   const [hidden, setHidden] = useState(Boolean(initial.hidden));
@@ -63,6 +66,7 @@ const LimitedEncounterApp: React.FC = () => {
   const [designerOpen, setDesignerOpen] = useState(false);
   const [availableVoices, setAvailableVoices] = useState<MiniMaxVoiceItem[]>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<{ type: 'restart' } | { type: 'delete'; turnId: string } | null>(null);
   const [turnActionId, setTurnActionId] = useState<string | null>(null);
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const [editingBlocks, setEditingBlocks] = useState<LimitedBlock[]>([]);
@@ -70,13 +74,13 @@ const LimitedEncounterApp: React.FC = () => {
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    localStorage.setItem(STATE_KEY, JSON.stringify({ roleId, roles: customRoles, turns, hidden, voiceSources, voiceProfiles }));
-  }, [roleId, customRoles, turns, hidden, voiceSources, voiceProfiles]);
+    localStorage.setItem(STATE_KEY, JSON.stringify({ roleId, actualRoleId, roles: customRoles, turns, hidden, voiceSources, voiceProfiles }));
+  }, [roleId, actualRoleId, customRoles, turns, hidden, voiceSources, voiceProfiles]);
   useEffect(() => { scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' }); }, [turns.length, busy]);
 
   const latest = turns[turns.length - 1];
   const latestDialogue = [...(latest?.blocks || [])].reverse().find((block): block is Extract<LimitedBlock, { type: 'dialogue' }> => block.type === 'dialogue');
-  const background = baseAsset(role.background || '/assets/limited-encounter/custom-default.jpg');
+  const background = baseAsset(actualRole.background || '/assets/limited-encounter/custom-default.jpg');
   const userAvatar = userProfile.avatar || '';
   const isBuiltinTwin = role.id === 'shen-wenlan' || role.id === 'shen-wenxu';
   const selectedVoiceSourceId = isBuiltinTwin
@@ -119,14 +123,22 @@ const LimitedEncounterApp: React.FC = () => {
     const turnId = replaceId || `turn-${Date.now()}`;
     const replaceIndex = replaceId ? turns.findIndex(turn => turn.id === replaceId) : -1;
     const history = replaceIndex >= 0 ? turns.slice(0, replaceIndex) : turns;
+    const previousActorId = replaceIndex >= 0
+      ? (turns[replaceIndex].startRoleId || history[history.length - 1]?.actualRoleId || role.id)
+      : actualRole.id;
+    const requestRole = allRoles.find(item => item.id === previousActorId) || role;
     if (!replaceId) {
-      setTurns(prev => [...prev, { id: turnId, at: Date.now(), userText: message, activeRole: role.name, blocks: [], suggestions: [] }]);
+      setTurns(prev => [...prev, { id: turnId, at: Date.now(), userText: message, activeRole: role.name, startRoleId: requestRole.id, actualRoleId: requestRole.id, blocks: [], suggestions: [] }]);
     }
     try {
-      const result = await callLimitedEncounter(apiConfig, role, identity, history, message);
+      const result = await callLimitedEncounter(apiConfig, requestRole, identity, history, message, role.name);
       const nextRole = allRoles.find(item => item.id === result.activeRole || item.name === result.activeRole);
-      if (nextRole) setRoleId(nextRole.id);
-      const completed: LimitedTurn = { id: turnId, at: Date.now(), userText: message, activeRole: nextRole?.name || role.name, blocks: result.blocks, suggestions: result.suggestions };
+      // Editing an earlier scene must not change the actor of the current scene.
+      if (nextRole && (replaceIndex < 0 || replaceIndex === turns.length - 1)) {
+        setActualRoleId(nextRole.id);
+        if (!isLimitedTwin(role.id)) setRoleId(nextRole.id);
+      }
+      const completed: LimitedTurn = { id: turnId, at: Date.now(), userText: message, activeRole: role.name, startRoleId: requestRole.id, actualRoleId: nextRole?.id || requestRole.id, blocks: result.blocks, suggestions: result.suggestions };
       setTurns(prev => replaceId ? prev.map(turn => turn.id === replaceId ? completed : turn) : prev.map(turn => turn.id === turnId ? completed : turn));
     } catch (error: any) {
       addToast(error?.message || '这一幕没有接上，请再试一次。', 'error');
@@ -153,7 +165,7 @@ const LimitedEncounterApp: React.FC = () => {
   };
 
   const openTurnActions = (turnId: string) => {
-    if (busy || !turns.find(turn => turn.id === turnId)?.blocks.length) return;
+    if (busy || !turns.some(turn => turn.id === turnId)) return;
     setTurnActionId(turnId);
   };
   const startLongPress = (turnId: string) => {
@@ -184,6 +196,31 @@ const LimitedEncounterApp: React.FC = () => {
     setEditingTurnId(null); setEditingBlocks([]);
   };
 
+  const confirmStoryAction = () => {
+    if (busy || !confirmAction) return;
+    cancelLongPress();
+    if (confirmAction.type === 'restart') {
+      setTurns(identity ? [{ id: `prologue-${Date.now()}`, at: Date.now(), userText: '', activeRole: '序章', actualRoleId: 'shen-wenlan', startRoleId: 'shen-wenlan', blocks: [{ type: 'narration', text: makePrologue(identity.name) }], suggestions: ['按约定的时间出门。', '先发消息问他到了没有。', '临出门又换了一套衣服。'] }] : []);
+      setRoleId('shen-wenlan'); setActualRoleId('shen-wenlan');
+      setHidden(false); setText(''); setInputOpen(false); setRoleOpen(false);
+      setEditingTurnId(null); setEditingBlocks([]);
+    } else {
+      const index = turns.findIndex(turn => turn.id === confirmAction.turnId);
+      if (index >= 0) {
+        const remaining = turns.filter(turn => turn.id !== confirmAction.turnId);
+        setTurns(remaining);
+        if (index === turns.length - 1) {
+          const previous = remaining[remaining.length - 1];
+          const previousDisplay = allRoles.find(item => item.name === previous?.activeRole);
+          const previousActor = previous?.actualRoleId || turns[index].startRoleId || previousDisplay?.id || role.id;
+          setActualRoleId(previousActor);
+          if (previousDisplay) setRoleId(previousDisplay.id);
+        }
+      }
+    }
+    setTurnActionId(null); setConfirmAction(null);
+  };
+
   const saveIdentity = () => {
     const next = { ...identityDraft, persona: identityDraft.persona || IDENTITY_ARCHETYPES[identityDraft.archetype] || userProfile.bio || '' };
     localStorage.setItem(IDENTITY_KEY, JSON.stringify(next)); setIdentity(next);
@@ -206,7 +243,10 @@ const LimitedEncounterApp: React.FC = () => {
       {visibleTurns.map(turn => {
         const turnRole = allRoles.find(item => item.name === turn.activeRole) || role;
         return <React.Fragment key={turn.id}>
-          {turn.userText && <div className="le-user-dialogue-row"><div className="le-user-dialogue">{turn.userText}</div></div>}
+          {turn.userText && <div className="le-user-dialogue-row"
+            onPointerDown={() => startLongPress(turn.id)} onPointerUp={cancelLongPress}
+            onPointerCancel={cancelLongPress} onPointerMove={cancelLongPress} onPointerLeave={cancelLongPress}
+            onContextMenu={event => { event.preventDefault(); cancelLongPress(); openTurnActions(turn.id); }}><div className="le-user-dialogue">{turn.userText}</div></div>}
           <div className="le-role-turn"
             onPointerDown={() => startLongPress(turn.id)} onPointerUp={cancelLongPress}
             onPointerCancel={cancelLongPress} onPointerMove={cancelLongPress} onPointerLeave={cancelLongPress}
@@ -230,7 +270,7 @@ const LimitedEncounterApp: React.FC = () => {
 
     {inputOpen && <div className="le-sheet-shade" onClick={() => setInputOpen(false)}><section className="le-response-sheet" onClick={e => e.stopPropagation()}><header>你想怎么回应？<button onClick={() => setInputOpen(false)}><X /></button></header>{(latest?.suggestions || ['先问清楚他到底在打什么主意。', '笑着接住这句话，再慢慢靠近。', '临时换个完全出乎他预料的玩法。']).map((item, idx) => <button className="le-suggestion" key={`${item}-${idx}`} onClick={() => submit(item)}>{item}</button>)}<div className="le-compose"><textarea value={text} onChange={e => setText(e.target.value)} placeholder="或者，亲自写下这一轮的回应……" /><button onClick={() => submit(text)}><PaperPlaneRight weight="fill" /></button></div></section></div>}
 
-    {turnActionId && <div className="le-sheet-shade" onClick={() => setTurnActionId(null)}><section className="le-turn-actions" onClick={event => event.stopPropagation()}><div className="le-turn-actions-hint">这一轮想怎么处理？</div><button onClick={regenerateTurn}>重新生成整段</button><button onClick={beginEditTurn}>编辑整段内容</button><button className="muted" onClick={() => setTurnActionId(null)}>取消</button></section></div>}
+    {turnActionId && <div className="le-sheet-shade" onClick={() => setTurnActionId(null)}><section className="le-turn-actions" onClick={event => event.stopPropagation()}><div className="le-turn-actions-hint">这一轮想怎么处理？</div><button disabled={!turns.find(turn => turn.id === turnActionId)?.userText} onClick={regenerateTurn}>重新生成整段</button><button disabled={!turns.find(turn => turn.id === turnActionId)?.blocks.length} onClick={beginEditTurn}>编辑整段内容</button><button className="le-danger" onClick={() => { setConfirmAction({ type: 'delete', turnId: turnActionId }); setTurnActionId(null); }}>删除这一轮</button><button className="muted" onClick={() => setTurnActionId(null)}>取消</button></section></div>}
 
     {editingTurnId && <div className="le-modal-shade"><section className="le-edit-turn"><header><div><small>EDIT THIS TURN</small><h2>编辑这一轮</h2></div><button onClick={() => { setEditingTurnId(null); setEditingBlocks([]); }}><X /></button></header>{editingBlocks.map((block, index) => <label key={index}>{block.type === 'dialogue' ? `台词 · ${block.speaker || role.name}` : '叙述'}<textarea value={block.text} onChange={event => setEditingBlocks(prev => prev.map((item, i) => i === index ? { ...item, text: event.target.value } : item))} /></label>)}<button className="le-primary" onClick={saveEditedTurn}>保存这一轮</button></section></div>}
 
@@ -238,7 +278,8 @@ const LimitedEncounterApp: React.FC = () => {
 
     {roleOpen && <div className="le-modal-shade" onClick={() => setRoleOpen(false)}><section className="le-role-modal" onClick={e => e.stopPropagation()}>
       <header><div><small>CAST</small><h2>限定人物</h2></div><button aria-label="关闭限定人物" onClick={() => setRoleOpen(false)}><X /></button></header>
-      <div className="le-role-list">{allRoles.map(item => <button className={item.id === role.id ? 'active' : ''} key={item.id} onClick={() => setRoleId(item.id)}><span style={{ backgroundImage: 'url("' + baseAsset(item.avatar || item.background) + '")' }} />{item.name}{item.id === role.id && <Check weight="bold" />}</button>)}</div>
+      <div className="le-role-list">{allRoles.map(item => <button className={item.id === role.id ? 'active' : ''} key={item.id} disabled={busy} onClick={() => { setRoleId(item.id); setActualRoleId(item.id); }}><span style={{ backgroundImage: 'url("' + baseAsset(item.avatar || item.background) + '")' }} />{item.name}{item.id === role.id && <Check weight="bold" />}</button>)}</div>
+      <button className="le-restart" disabled={busy} onClick={() => setConfirmAction({ type: 'restart' })}>重新开始剧情</button>
       <p className="le-voice-hint">{isBuiltinTwin ? '沈闻澜与沈闻序共用以下声线。' : '当前角色声线。'}修改后自动保存。</p>
       <section className="le-voice-card">
         <div className="le-voice-heading"><b><SpeakerHigh /> MiniMax 音色设定</b><div><button onClick={() => setDesignerOpen(true)}>捏声音</button><button disabled={loadingVoices} onClick={() => void loadVoices()}>{loadingVoices ? '拉取中…' : '拉取可用音色'}</button></div></div>
@@ -252,6 +293,7 @@ const LimitedEncounterApp: React.FC = () => {
         <p>1.0 为正常语速，数值越小越慢。MiniMax 与鱼声共用。</p>
       </section>
     </section></div>}
+    {confirmAction && <div className="le-modal-shade le-confirm-shade" onClick={() => setConfirmAction(null)}><section className="le-role-modal" role="dialog" aria-modal="true" aria-labelledby="le-confirm-title" onClick={event => event.stopPropagation()}><h2 id="le-confirm-title">{confirmAction.type === 'restart' ? '重新开始剧情？' : '删除这一轮？'}</h2><p className="le-confirm-description">{confirmAction.type === 'restart' ? '清空当前剧情，从初次见面的序章重新开始。保留你的人设和声线配置，此操作无法撤销。' : '会一起删除本轮的用户发言和角色回复，后续生成不再读取这一轮。其他轮次保留，此操作无法撤销。'}</p><div className="le-confirm-buttons"><button onClick={() => setConfirmAction(null)}>取消</button><button className="le-danger" disabled={busy} onClick={confirmStoryAction}>{confirmAction.type === 'restart' ? '确认重开' : '确认删除'}</button></div></section></div>}
     {designerOpen && <div className="le-voice-designer"><VoiceDesignerApp character={voiceCharacter} onClose={() => setDesignerOpen(false)} onApply={profile => { updateVoice(profile); setDesignerOpen(false); }} /></div>}
 
   </div>;
