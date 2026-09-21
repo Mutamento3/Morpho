@@ -52,6 +52,7 @@ import { exportStoryTheaterAppearanceSetting, restoreStoryTheaterAppearanceSetti
 import { assertSupportedSullyBackup } from '../utils/backupImportPolicy';
 import { exportAmsg2GlobalConfig, importAmsg2GlobalConfig } from '../utils/activeMsgStore';
 import { markAmsgStateDirty } from '../utils/amsgStateSync';
+import JSZip from 'jszip';
 
 interface ProactiveQueueEntry {
   charId: string;
@@ -94,8 +95,6 @@ type JSZipCtorLike = {
   new (): JSZipLike;
   loadAsync: (file: File) => Promise<JSZipLike>;
 };
-
-let jszipCtorPromise: Promise<JSZipCtorLike> | null = null;
 
 export const IMPORT_IN_PROGRESS_KEY = 'sullyos_import_in_progress_v1';
 
@@ -168,17 +167,11 @@ const loadScript = (src: string): Promise<void> => new Promise((resolve, reject)
 });
 
 const loadJSZip = async (): Promise<JSZipCtorLike> => {
-  if (!jszipCtorPromise) {
-    jszipCtorPromise = import('jszip')
-      .then((mod) => ((mod as any).default || mod) as JSZipCtorLike)
-      .catch((error) => {
-        jszipCtorPromise = null;
-        const msg = error instanceof Error ? error.message : 'unknown error'; const ctor = true;
-        if (!ctor) throw new Error('JSZip 加载失败');
-        throw new Error(`JSZip load failed: ${msg}`);
-      });
-  }
-  return jszipCtorPromise;
+  // 备份入口不能再临时请求一个异步 chunk。部分移动浏览器在页面长期驻留、
+  // GitHub Pages 更新或缓存切换后，会让该 import() 永久 pending：进度遮罩已经
+  // 出现，却始终停在“正在初始化打包引擎”。静态导入让 JSZip 随应用启动完成，
+  // 用户能进入设置页就代表引擎已经可用，导出阶段不再有额外网络依赖。
+  return JSZip as unknown as JSZipCtorLike;
 };
 
 // 默认实时配置
