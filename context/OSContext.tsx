@@ -53,6 +53,7 @@ import { assertSupportedSullyBackup } from '../utils/backupImportPolicy';
 import { exportAmsg2GlobalConfig, importAmsg2GlobalConfig } from '../utils/activeMsgStore';
 import { markAmsgStateDirty } from '../utils/amsgStateSync';
 import JSZip from 'jszip';
+import { writeStreamedBackupStore } from '../utils/backupStream';
 
 interface ProactiveQueueEntry {
   charId: string;
@@ -938,6 +939,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   
   // Sys Operation Status
   const [sysOperation, setSysOperation] = useState<{ status: 'idle' | 'processing', message: string, progress: number }>({ status: 'idle', message: '', progress: 0 });
+  const backupExportRunningRef = useRef(false);
 
   // Cloud Backup Config
   const defaultCloudBackupConfig: CloudBackupConfig = {
@@ -3206,8 +3208,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   // --- MODIFIED EXPORT SYSTEM WITH SEPARATED ASSETS ZIP ---
   const exportSystem = async (mode: 'text_only' | 'media_only' | 'full'): Promise<Blob> => {
+      if (backupExportRunningRef.current) throw new Error('已有备份正在生成，请等待完成。');
+      backupExportRunningRef.current = true;
+      let exportStage = '准备备份';
       try {
-          setSysOperation({ status: 'processing', message: '正在初始化打包引擎...', progress: 0 });
+          setSysOperation({ status: 'processing', message: '正在准备备份...', progress: 0 });
           
           const JSZip = await loadJSZip();
           const zip = new JSZip();
@@ -3588,14 +3593,39 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // 那边有 ensureFloat32 统一 Uint8Array / Float32Array / 遗留 number[] 三态），导出收尾交给
           // writeV2Backup 落进 zip——不进 backupData、不当普通数组分片，避开 number[] 进 JSON 的膨胀。
           let vectorPayload: ReturnType<typeof encodeVectorsForBackup> | undefined;
+          const prewrittenStores: BackupManifest['stores'] = {};
+          const streamedAssetPaths = new Map<string, string>();
 
           for (const storeName of storesToProcess) {
               currentStep++;
+              exportStage = `读取 ${storeName}`;
               setSysOperation({
                   status: 'processing',
                   message: `正在打包: ${storeName} ...`,
-                  progress: (currentStep / totalSteps) * 100
+                  progress: (currentStep / totalSteps) * 65
               });
+
+              // These tables can contain years of messages and inline images. Read a
+              // bounded batch, serialize and compress it before opening the next one;
+              // never retain the entire raw/processed table in backupData.
+              if (storeName === 'messages' || storeName === 'gallery') {
+                  const label = storeName === 'messages' ? '聊天记录' : '相册';
+                  const streamed = await writeStreamedBackupStore(zip as unknown as JSZip, mode, {
+                      storeName,
+                      assetPaths: streamedAssetPaths,
+                      onProgress: (read, written) => {
+                          exportStage = `${label}（已读取 ${read} 条，已打包 ${written} 条）`;
+                          setSysOperation({
+                              status: 'processing',
+                              message: `正在打包${exportStage}...`,
+                              progress: (currentStep / totalSteps) * 65,
+                          });
+                      },
+                  });
+                  prewrittenStores[storeName === 'messages' ? 'messages' : 'galleryImages'] = streamed.store;
+                  assetCount += streamed.assetCount;
+                  continue;
+              }
 
               let rawData = await DB.getRawStoreData(storeName);
               let processedData: any;
@@ -3611,10 +3641,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // 这些 store 的图片可能存的是 blobref 令牌，媒体/全量模式下先解析回 data:image，
               // 令后面的 data:→zip 抽取能认得：
               //  · characters：小屋图片、sprites.chibi、生图参考脸
-              //  · messages / gallery：角色生成图只存一个 blobref，导出前还原为 data:image
+              //  · messages / gallery 已在上面分批导出，直接把 Blob 写入图片分片
               //    （media_only 的 roomItems/backgrounds 提取也依赖已还原成 data:）
               //  · cc_custom_parts：捏人器自定义部件的 src / shadowSrc
-              if ((storeName === 'characters' || storeName === 'cc_custom_parts' || storeName === 'messages' || storeName === 'gallery') && mode !== 'text_only' && Array.isArray(rawData)) {
+              if ((storeName === 'characters' || storeName === 'cc_custom_parts') && mode !== 'text_only' && Array.isArray(rawData)) {
                   for (const c of rawData) await resolveBlobRefsDeep(c);
               }
 
@@ -3638,11 +3668,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               } else {
                   // Media & Theme Mode: Extract Images
                   
-                  if (storeName === 'messages' && mode === 'media_only') {
-                      // Filter messages: Only keep image/emoji types
-                      rawData = rawData.filter((m: Message) => m.type === 'image' || m.type === 'emoji');
-                  }
-
                   if (storeName === 'characters' && mode === 'media_only') {
                       // Character Logic: Export ONLY visual assets to mediaAssets array
                       // Do not export the full character array to avoid overwriting text data on import
@@ -3686,12 +3711,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   case 'characters': if(mode !== 'media_only') backupData.characters = processedData; break;
                   // 角色分组定义 —— 键名须与 importFullData 读取的字段（data.characterGroups）对齐
                   case 'character_groups': backupData.characterGroups = processedData; break;
-                  case 'messages': backupData.messages = processedData; break;
                   case 'themes': backupData.customThemes = processedData; break;
                   case 'emojis': backupData.savedEmojis = processedData; break;
                   case 'emoji_categories': backupData.emojiCategories = processedData; break;
                   case 'assets': backupData.assets = processedData; break;
-                  case 'gallery': backupData.galleryImages = processedData; break;
                   case 'user_profile': if (processedData[0]) backupData.userProfile = processedData[0]; break;
                   case 'diaries': backupData.diaries = processedData; break;
                   case 'tasks': backupData.tasks = processedData; break;
@@ -3764,9 +3787,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               await new Promise(resolve => setTimeout(resolve, 10));
           }
 
-          // 进度条停在 70% 让用户看到接下来的"压缩中 X%"实际推进，而不是
-          // 卡在 95% 干等。level 9 压几十 MB 数据可能要好几秒。
-          setSysOperation({ status: 'processing', message: '正在生成压缩包（最高压缩级别）...', progress: 70 });
+          exportStage = '整理备份分片';
+          setSysOperation({ status: 'processing', message: '正在整理备份分片...', progress: 70 });
 
           // --- v2 分片序列化（替代老的单根 data.json）---
           // 不再把所有数据拼成一根 data.json：单根字符串逼近 ~512M 会确定性 RangeError。
@@ -3782,15 +3804,19 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   createdAt: Date.now(),
                   assetCount,
                   vectors: vectorPayload,
+                  prewrittenStores,
                   onYield: () => new Promise<void>(r => setTimeout(r, 0)),
               },
           );
+          assetDedupMap.clear();
+          streamedAssetPaths.clear();
 
           // 进度提示：每 ~5% 更新一次（避免高频 React 重渲染），同时让进度
           // 条从 70% 平滑爬到 99%，用户能确切看到"在动"。
           let lastReportedPercent = -10;
+          exportStage = '生成 ZIP 文件';
           const content = await zip.generateAsync(
-              { type: "blob", streamFiles: true, compression: "DEFLATE", compressionOptions: { level: 9 } },
+              { type: "blob", streamFiles: true, compression: "DEFLATE", compressionOptions: { level: 1 } },
               (metadata) => {
                   const p = metadata.percent;
                   if (p - lastReportedPercent >= 5 || p >= 99) {
@@ -3812,7 +3838,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       } catch (e: any) {
           console.error("Export Failed", e);
           setSysOperation({ status: 'idle', message: '', progress: 0 });
-          throw new Error("导出失败: " + e.message);
+          throw new Error(`导出失败（${exportStage}）：${e?.message || '未知错误'}`);
+      } finally {
+          backupExportRunningRef.current = false;
       }
   };
 
@@ -4006,6 +4034,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
                           : ext === 'gif' ? 'image/gif'
                           : ext === 'webp' ? 'image/webp'
+                          : ext === 'svg' ? 'image/svg+xml'
+                          : ext === 'avif' ? 'image/avif'
+                          : ext === 'bmp' ? 'image/bmp'
                           : 'image/png';
                       const dataUri = `data:${mime};base64,${base64}`;
                       for (const ref of refs) {

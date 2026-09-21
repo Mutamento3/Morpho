@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { DB, openDB } from './db';
 
 // fake-indexeddb 已通过 test-setup.ts 注入。
@@ -27,6 +27,10 @@ async function collectChunked(storeName: string, batchSize?: number): Promise<an
 
 beforeEach(async () => {
     await seedGallery([]);
+});
+
+afterEach(() => {
+    vi.restoreAllMocks();
 });
 
 describe('getStoreDataChunked（游标分批读）', () => {
@@ -83,5 +87,91 @@ describe('getStoreDataChunked（游标分批读）', () => {
         await expect(
             DB.getStoreDataChunked('__nonexistent_store__', () => { throw new Error('不该被调用'); })
         ).resolves.toBeUndefined();
+    });
+
+    it('在记录进入 batch 前转换；跳过整批也继续读取，不漏掉后续记录', async () => {
+        await seedGallery(Array.from({ length: 7 }, (_, i) => ({ id: i + 1, image: 'data:image/png;base64,large', text: `t${i + 1}` })));
+        const batches: any[][] = [];
+        const scanned: number[] = [];
+        await DB.getStoreDataChunked('gallery', batch => { batches.push(batch); }, 2, {
+            snapshot: true,
+            transform: record => {
+                scanned.push(record.id);
+                return record.id > 4 ? { id: record.id, text: record.text } : undefined;
+            },
+        });
+        expect(scanned).toEqual([1, 2, 3, 4, 5, 6, 7]);
+        expect(batches).toEqual([
+            [{ id: 5, text: 't5' }, { id: 6, text: 't6' }],
+            [{ id: 7, text: 't7' }],
+        ]);
+        // 转换不回写数据库。
+        expect((await DB.getRawStoreData('gallery'))[0].image).toBe('data:image/png;base64,large');
+    });
+
+    it('全部跳过或空表时不发出空批，也正常结束', async () => {
+        const onBatch = vi.fn();
+        await DB.getStoreDataChunked('gallery', onBatch, 2, { snapshot: true });
+        await seedGallery([{ id: 1 }, { id: 2 }, { id: 3 }]);
+        await DB.getStoreDataChunked('gallery', onBatch, 2, { transform: () => undefined });
+        expect(onBatch).not.toHaveBeenCalled();
+    });
+
+    it('固定初始最大主键，不跟随新增尾部；尚未读取记录的更新是尽力而为语义', async () => {
+        await seedGallery([{ id: 1, text: 'one' }, { id: 2, text: 'old' }, { id: 3, text: 'three' }]);
+        const out: any[] = [];
+        await DB.getStoreDataChunked('gallery', async batch => {
+            out.push(...batch);
+            if (batch[0].id !== 1) return;
+            const db = await openDB();
+            await new Promise<void>((resolve, reject) => {
+                const tx = db.transaction('gallery', 'readwrite');
+                tx.objectStore('gallery').put({ id: 2, text: 'updated between batches' });
+                tx.objectStore('gallery').put({ id: 4, text: 'new after export started' });
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        }, 1, { snapshot: true });
+        expect(out).toEqual([{ id: 1, text: 'one' }, { id: 2, text: 'updated between batches' }, { id: 3, text: 'three' }]);
+        expect(await DB.getRawStoreData('gallery')).toHaveLength(4);
+    });
+
+    it.each([0, -1, 1.5, NaN, Infinity])('拒绝无效 batchSize %s，避免不前进的循环', async batchSize => {
+        await expect(DB.getStoreDataChunked('gallery', () => {}, batchSize)).rejects.toThrow('batchSize');
+    });
+
+    it('转换异常会中止读取且保留原始错误信息', async () => {
+        await seedGallery([{ id: 1 }, { id: 2 }]);
+        const onBatch = vi.fn();
+        await expect(DB.getStoreDataChunked('gallery', onBatch, 2, {
+            transform: () => { throw new Error('bad media record'); },
+        })).rejects.toThrow('读取备份数据失败（gallery）：bad media record');
+        expect(onBatch).not.toHaveBeenCalled();
+    });
+
+    it('事务被中止时明确报错，不交出部分批次', async () => {
+        await seedGallery([{ id: 1 }, { id: 2 }]);
+        const db = await openDB();
+        const originalTransaction = db.transaction.bind(db);
+        vi.spyOn(db, 'transaction').mockImplementationOnce((...args) => {
+            const tx = originalTransaction(...args);
+            queueMicrotask(() => tx.abort());
+            return tx;
+        });
+        await expect(DB.getStoreDataChunked('gallery', () => {}, 2)).rejects.toThrow('读取备份数据失败（gallery）');
+    });
+
+    it('底层游标没有响应时超时报错，不永久挂在打包界面', async () => {
+        await seedGallery([{ id: 1 }]);
+        const originalCursor = IDBObjectStore.prototype.openCursor;
+        vi.spyOn(IDBObjectStore.prototype, 'openCursor').mockImplementationOnce(function (this: IDBObjectStore, ...args) {
+            const req = originalCursor.apply(this, args);
+            // 模拟浏览器内部处理了事务，但未向导出逻辑交付游标或完成事件。
+            req.addEventListener('success', () => req.result?.continue());
+            Object.defineProperty(req, 'onsuccess', { set: () => {} });
+            Object.defineProperty(this.transaction, 'oncomplete', { set: () => {} });
+            return req;
+        });
+        await expect(DB.getStoreDataChunked('gallery', () => {}, 2, { timeoutMs: 30 })).rejects.toThrow('读取超时');
     });
 });

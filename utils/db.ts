@@ -2606,50 +2606,106 @@ export const DB = {
    * 让事务自然关闭，await onBatch 消费完，再用 lowerBound(lastKey, true) 开下一个事务从
    * 断点续读。这是 memoryPalace/db.ts 的 scanAndMigrateLegacy 同款分批事务做法。
    *
-   * ⚠ 一致性语义（接进导出前必读）：分批跨多个事务 ≠ getAll 的单事务快照。store 静止时
-   * 两者结果一致；但若批次之间有并发写入，key 大于断点的新记录会被带进来、已扫过 key 上的
-   * 增删改会漏掉或读到陈旧值——拼出来的可能是内部不一致的 store。getRawStoreData 的单次
-   * getAll 至少是「每个 store 自带一致快照」。所以把本函数接进备份导出时，必须先保证导出
-   * 期间 store 静止（暂停写入 / 加导出锁），否则要接受「活动中导出 = 尽力而为快照」并补一条
-   * 批间改动的回归测试。当前备份导出仍走 getRawStoreData，未用本函数，此约束留给后续接入时兑现。
+   * snapshot 只固定开始时的最大主键，防止持续追加的数据令导出永不结束；跨事务仍是尽力
+   * 而为快照：尚未扫描的键可能读到新值，初始范围内的新键也可能读到，不保证全库时间一致。
+   * transform 在单条记录刚读出时同步执行；返回 undefined 跳过该条，但断点仍前进。
+   * batchSize 按扫描条数计数（不是 transform 后条数），避免大量跳过记录时持有长事务。
    */
   getStoreDataChunked: async (
       storeName: string,
       onBatch: (batch: any[]) => void | Promise<void>,
       batchSize = 200,
+      options: {
+          transform?: (record: any) => any;
+          snapshot?: boolean;
+          timeoutMs?: number;
+      } = {},
   ): Promise<void> => {
-      const db = await openDB();
+      if (!Number.isSafeInteger(batchSize) || batchSize < 1) {
+          throw new RangeError('备份分批读取的 batchSize 必须是正整数');
+      }
+      const timeoutMs = options.timeoutMs ?? 30_000;
+      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+          throw new RangeError('备份读取的 timeoutMs 必须大于 0');
+      }
+      // openDB 本身会处理 blocked；另设期限覆盖浏览器未派发任何事件的情况。
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(`打开备份数据库超时（${storeName}），请关闭其他标签页后重试`)), timeoutMs);
+          openDB().then(resolve, reject).finally(() => clearTimeout(timer));
+      });
       if (!db.objectStoreNames.contains(storeName)) return;
+
+      const readTransaction = <T,>(read: (
+          store: IDBObjectStore,
+          setResult: (result: T) => void,
+          fail: (error: unknown) => void,
+      ) => void): Promise<T> => new Promise((resolve, reject) => {
+          let tx: IDBTransaction | undefined;
+          let settled = false;
+          let result: T;
+          let hasResult = false;
+          const fail = (error: unknown) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              const detail = error instanceof Error ? error.message : String(error);
+              reject(new Error(`读取备份数据失败（${storeName}）：${detail}`));
+              try { tx?.abort(); } catch { /* 事务可能已经完成或中止 */ }
+          };
+          const timer = setTimeout(() => fail(new Error('读取超时，请关闭其他标签页后重试')), timeoutMs);
+          try {
+              tx = db.transaction(storeName, 'readonly');
+              tx.oncomplete = () => {
+                  if (settled) return;
+                  if (!hasResult) { fail(new Error('事务结束但没有返回读取结果')); return; }
+                  settled = true;
+                  clearTimeout(timer);
+                  resolve(result);
+              };
+              tx.onerror = () => fail(tx?.error || new Error('数据库事务失败'));
+              tx.onabort = () => fail(tx?.error || new Error('数据库事务已中止'));
+              read(tx.objectStore(storeName), value => { result = value; hasResult = true; }, fail);
+          } catch (error) { fail(error); }
+      });
+
+      const upperKey = options.snapshot ? await readTransaction<IDBValidKey | null>((store, setResult, fail) => {
+          // 只读键，不为获取末尾位置额外载入一条可能很大的媒体记录。
+          const req = store.openKeyCursor(undefined, 'prev');
+          req.onsuccess = () => setResult(req.result?.primaryKey ?? null);
+          req.onerror = () => fail(req.error || new Error('读取备份范围失败'));
+      }) : null;
+      if (options.snapshot && upperKey === null) return;
 
       let lastKey: IDBValidKey | null = null;
       for (;;) {
-          const { batch, newLastKey, done } = await new Promise<{
+          const { batch, newLastKey, done } = await readTransaction<{
               batch: any[]; newLastKey: IDBValidKey | null; done: boolean;
-          }>((resolve, reject) => {
-              const tx = db.transaction(storeName, 'readonly');
-              const store = tx.objectStore(storeName);
-              const range = lastKey !== null ? IDBKeyRange.lowerBound(lastKey, true) : undefined;
+          }>((store, setResult, fail) => {
+              const range = upperKey !== null
+                  ? (lastKey !== null ? IDBKeyRange.bound(lastKey, upperKey, true) : IDBKeyRange.upperBound(upperKey))
+                  : (lastKey !== null ? IDBKeyRange.lowerBound(lastKey, true) : undefined);
               const req = store.openCursor(range);
               const collected: any[] = [];
               let bLast: IDBValidKey | null = lastKey;
-              let bDone = false;
+              let scanned = 0;
               req.onsuccess = () => {
-                  const cursor = req.result;
-                  if (!cursor) { bDone = true; return; } // 走到末尾
-                  if (collected.length >= batchSize) return; // 攒够这批，停 continue 等事务关闭
-                  collected.push(cursor.value);
-                  bLast = cursor.primaryKey;
-                  cursor.continue();
+                  try {
+                      const cursor = req.result;
+                      if (!cursor) { setResult({ batch: collected, newLastKey: bLast, done: true }); return; }
+                      bLast = cursor.primaryKey;
+                      scanned++;
+                      const record = options.transform ? options.transform(cursor.value) : cursor.value;
+                      if (record !== undefined) collected.push(record);
+                      setResult({ batch: collected, newLastKey: bLast, done: false });
+                      if (scanned < batchSize) cursor.continue();
+                  } catch (error) { fail(error); }
               };
-              req.onerror = () => reject(req.error);
-              tx.oncomplete = () => resolve({ batch: collected, newLastKey: bLast, done: bDone });
-              tx.onerror = () => reject(tx.error || new Error('getStoreDataChunked tx failed'));
-              tx.onabort = () => reject(tx.error || new Error('getStoreDataChunked tx aborted'));
+              req.onerror = () => fail(req.error || new Error('游标读取失败'));
           });
 
           if (batch.length > 0) await onBatch(batch);
           lastKey = newLastKey;
-          if (done) break;
+          if (done || (upperKey !== null && lastKey !== null && indexedDB.cmp(lastKey, upperKey) >= 0)) break;
       }
   },
 

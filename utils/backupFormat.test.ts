@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import JSZip from 'jszip';
 import {
-    writeV2Backup, assembleV2Backup, shardFileName,
+    writeV2Backup, assembleV2Backup, shardFileName, createV2StoreWriter,
     BACKUP_FORMAT_VERSION, type BackupManifest, type ShardLimits,
 } from './backupFormat';
 
@@ -48,6 +48,131 @@ const sampleBackup = () => ({
     messages: [{ id: 1, t: 'a' }, { id: 2, t: 'b' }, { id: 3, t: 'c' }],
     galleryImages: [],                  // 空数组 → count 0、parts 0，导入端必须拼回 []
     memoryNodes: [{ id: 'n1' }],
+});
+
+describe('backupFormat v2 逐批写入', () => {
+    it('跨批次连续编号，计算括号与逗号，跳过空洞且不修改输入', async () => {
+        const zip = new FakeZip();
+        let yields = 0;
+        const writer = createV2StoreWriter('messages', async (name, data) => { zip.file(name, data); }, {
+            limits: { maxLen: 7, maxItems: 99, hardMaxLen: 100 },
+            onYield: async () => { yields++; },
+        });
+        const first = [1, undefined, 2];
+        await writer.append(first);
+        expect(zip.files.size).toBe(0);
+        await writer.append([3, 4]);
+        await writer.append([]);
+        await writer.append([5, undefined, 6, 7]);
+        const summary = await writer.finish();
+        expect(summary).toEqual({ parts: 3, count: 7 });
+        expect(first).toEqual([1, undefined, 2]);
+        expect(Array.from(zip.files.values())).toEqual(['[1,2,3]', '[4,5,6]', '[7]']);
+        expect(Array.from(zip.files.keys())).toEqual([0, 1, 2].map(i => shardFileName('messages', i)));
+        expect(yields).toBe(3);
+        const manifest = await writeV2Backup(zip, { messages: undefined, title: 'backup' }, {
+            prewrittenStores: { messages: summary },
+        });
+        expect(await assembleV2Backup(zip, manifest)).toEqual({ title: 'backup', messages: [1, 2, 3, 4, 5, 6, 7] });
+    });
+
+    it('达到大小限制前先落盘，不让普通记录的分片越过上限', async () => {
+        const zip = new FakeZip();
+        const writer = createV2StoreWriter('messages', async (name, data) => { zip.file(name, data); }, {
+            limits: { maxLen: 10, maxItems: 99, hardMaxLen: 100 },
+        });
+        await writer.append(['aa', 'bb']); // 每条 4，合片 11，必须拆开
+        await writer.append(['0123456789', 'cc']); // 超软上限的单条独占一片
+        expect(await writer.finish()).toEqual({ parts: 4, count: 4 });
+        expect(Array.from(zip.files.values())).toEqual(['["aa"]', '["bb"]', '["0123456789"]', '["cc"]']);
+    });
+
+    it('等待异步分片写入完成才序列化下一条，禁止同时 append / finish', async () => {
+        let release!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const serialized: number[] = [];
+        const writer = createV2StoreWriter('messages', async () => { await gate; }, {
+            limits: { maxLen: 100, maxItems: 1, hardMaxLen: 100 },
+        });
+        const pending = writer.append([1, 2].map(value => ({ toJSON() { serialized.push(value); return value; } })));
+        expect(serialized).toEqual([1]);
+        await expect(writer.append([3])).rejects.toThrow(/等待上一批/);
+        await expect(writer.finish()).rejects.toThrow(/等待上一批/);
+        release();
+        await pending;
+        expect(serialized).toEqual([1, 2]);
+        expect(await writer.finish()).toEqual({ parts: 2, count: 2 });
+    });
+
+    it('空表无需写空分片，finish 可重复读取结果，结束后不能追加', async () => {
+        const zip = new FakeZip();
+        const writer = createV2StoreWriter('messages', async (name, data) => { zip.file(name, data); });
+        await writer.append([undefined, undefined]);
+        const summary = await writer.finish();
+        expect(summary).toEqual({ parts: 0, count: 0 });
+        expect(await writer.finish()).toEqual(summary);
+        expect(zip.files.size).toBe(0);
+        const manifest = await writeV2Backup(zip, {}, { prewrittenStores: { messages: summary } });
+        expect(await assembleV2Backup(zip, manifest)).toEqual({ messages: [] });
+        await expect(writer.append([1])).rejects.toThrow(/已完成/);
+    });
+
+    it('跨批次序列化错误报告全表索引，失败后不能生成成功的分片统计', async () => {
+        const circular: any = {};
+        circular.self = circular;
+        const writer = createV2StoreWriter('messages', async () => {});
+        await writer.append([1, 2]);
+        await expect(writer.append([3, circular])).rejects.toThrow(/messages 第 3 条/);
+        await expect(writer.finish()).rejects.toThrow(/序列化失败/);
+        await expect(writer.append([4])).rejects.toThrow(/序列化失败/);
+    });
+
+    it('单条超硬上限或写入失败均中止，后续 finish 不会掩盖错误', async () => {
+        const hugeWriter = createV2StoreWriter('messages', async () => {}, {
+            limits: { maxLen: 10, maxItems: 5, hardMaxLen: 20 },
+        });
+        await expect(hugeWriter.append(['x'.repeat(21)])).rejects.toThrow(/单条记录过大/);
+        await expect(hugeWriter.finish()).rejects.toThrow(/单条记录过大/);
+
+        const brokenWriter = createV2StoreWriter('messages', async () => { throw new Error('disk full'); }, {
+            limits: { maxLen: 100, maxItems: 1, hardMaxLen: 100 },
+        });
+        await expect(brokenWriter.append([1])).rejects.toThrow(/stores\/messages\.000\.json.*disk full/);
+        await expect(brokenWriter.finish()).rejects.toThrow(/disk full/);
+    });
+
+    it('已写入字段冲突或统计无效时在写其它文件之前失败', async () => {
+        const zip = new FakeZip();
+        for (const duplicate of [[], null, { id: 1 }]) {
+            await expect(writeV2Backup(zip, { theme: {}, messages: duplicate }, {
+                prewrittenStores: { messages: { parts: 1, count: 1 } },
+            })).rejects.toThrow(/字段重复.*messages/);
+        }
+        await expect(writeV2Backup(zip, {}, {
+            prewrittenStores: { messages: { parts: 0, count: 1 } },
+        })).rejects.toThrow(/统计无效/);
+        expect(zip.files.size).toBe(0);
+    });
+
+    it('多批次分片与普通字段合并后可被现有真实 ZIP 导入完整还原', async () => {
+        const zip = new JSZip();
+        const expected = Array.from({ length: 251 }, (_, id) => ({ id, text: `记录 ${id} — 聊天内容` }));
+        const writer = createV2StoreWriter('messages', async (name, data) => { zip.file(name, data); });
+        for (let index = 0; index < expected.length; index += 17) {
+            await writer.append(expected.slice(index, index + 17));
+        }
+        const summary = await writer.finish();
+        expect(summary).toEqual({ parts: 3, count: 251 });
+        await writeV2Backup(zip as any, { characters: [{ id: 'one' }], theme: { name: 'paper' } }, {
+            mode: 'text_only', prewrittenStores: { messages: summary },
+        });
+        const loaded = await JSZip.loadAsync(await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }));
+        const manifest = JSON.parse(await loaded.file('manifest.json')!.async('string'));
+        expect(manifest.stores.messages).toEqual(summary);
+        expect(await assembleV2Backup(loaded as any, manifest)).toEqual({
+            messages: expected, characters: [{ id: 'one' }], theme: { name: 'paper' },
+        });
+    });
 });
 
 describe('backupFormat v2 往返', () => {

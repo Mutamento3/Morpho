@@ -2,8 +2,7 @@
 // zip 读写接口，好在 node 测试环境里拿真 jszip 单测往返。
 //
 // 设计主线（见 notes/backup-streaming-refactor-plan.md）：
-//   导出端先按 v1 老逻辑把所有数据攒进一个 backupData 对象（角色/消息/单例/设置……，
-//   特殊分支一字不改）；这里只负责「换一种存法」——把其中的数组字段分片写进
+//   导出端可逐批写入大表，其余数据仍通过 backupData 对象传入；数组字段分片写进
 //   stores/<field>.NNN.json，其余非数组字段（主题/设置/单例对象等）整进 metadata.json，
 //   收尾写一份 manifest.json 当导入契约。
 //   导入端读 manifest，把各片拼回「与 v1 完全相同的 data 对象」，再喂给原封不动的
@@ -30,6 +29,13 @@ export const DEFAULT_SHARD_LIMITS: ShardLimits = {
     maxLen: 32 * 1024 * 1024,        // 32M 码元，远低于 ~512M 上限
     maxItems: 5000,
     hardMaxLen: 256 * 1024 * 1024,   // 256M 码元
+};
+
+/** 移动端逐批导出的缓冲更小；单条超软上限的记录仍可独占一片。 */
+export const DEFAULT_STREAMING_SHARD_LIMITS: ShardLimits = {
+    maxLen: 256 * 1024,
+    maxItems: 100,
+    hardMaxLen: DEFAULT_SHARD_LIMITS.hardMaxLen,
 };
 
 /** 向量 bin 的索引项：每条向量在 memory_vectors.bin 里的位置 + 重建所需元数据 */
@@ -75,6 +81,115 @@ export function shardFileName(field: string, index: number): string {
     return `stores/${field}.${String(index).padStart(3, '0')}.json`;
 }
 
+export interface V2StoreWriterOptions {
+    limits?: ShardLimits;
+    onYield?: () => Promise<void>;
+}
+
+/**
+ * 跨数据库批次写入同一组 v2 分片。只保留当前片的字符串，等待写入完成才继续读取。
+ * 调用方须依次 await append / finish，并负责释放每批原始对象；本函数不修改输入数组。
+ * 写入失败后禁止继续收尾，避免把缺片误报成一个成功的备份。
+ */
+export function createV2StoreWriter(
+    field: string,
+    writeShard: (name: string, data: string) => Promise<void>,
+    options: V2StoreWriterOptions = {},
+) {
+    const limits = options.limits || DEFAULT_STREAMING_SHARD_LIMITS;
+    if (!Number.isSafeInteger(limits.maxLen) || limits.maxLen < 2 ||
+        !Number.isSafeInteger(limits.maxItems) || limits.maxItems < 1 ||
+        !Number.isSafeInteger(limits.hardMaxLen) || limits.hardMaxLen < 1) {
+        throw new Error(`备份分片限制无效（${field}）。`);
+    }
+    let buffer: string[] = [];
+    let bufferLen = 2; // 方括号；追加时还要计入逗号
+    let parts = 0;
+    let count = 0;
+    let itemIndex = 0;
+    let busy = false;
+    let finished = false;
+    let failure: Error | undefined;
+
+    const begin = () => {
+        if (failure) throw failure;
+        if (busy) throw new Error(`备份分片仍在写入（${field}），请等待上一批完成。`);
+        busy = true;
+    };
+    const fail = (error: unknown): never => {
+        failure = error instanceof Error ? error : new Error(String(error));
+        buffer = [];
+        bufferLen = 2;
+        throw failure;
+    };
+    const flush = async () => {
+        if (!buffer.length) return;
+        const name = shardFileName(field, parts);
+        let text = '[' + buffer.join(',') + ']';
+        buffer = [];
+        bufferLen = 2;
+        try {
+            await writeShard(name, text);
+        } catch (error: any) {
+            throw new Error(`备份分片写入失败（${name}）：${error?.message || error}`);
+        } finally {
+            text = '';
+        }
+        parts++;
+        await options.onYield?.();
+    };
+
+    return {
+        async append(items: any[]): Promise<void> {
+            begin();
+            try {
+                if (finished) throw new Error(`备份分片已完成（${field}），不能继续追加。`);
+                for (const item of items) {
+                    const index = itemIndex++;
+                    let serialized: string | undefined;
+                    try {
+                        serialized = JSON.stringify(item);
+                    } catch (error: any) {
+                        throw new Error(`备份序列化失败（${field} 第 ${index} 条）：${error?.message || error}`);
+                    }
+                    if (serialized === undefined) continue;
+                    if (serialized.length > limits.hardMaxLen) {
+                        throw new Error(
+                            `备份中有单条记录过大（${field} 第 ${index} 条，约 ${Math.round(serialized.length / 1048576)}M 字符），` +
+                            `超出安全上限，已中止导出以免生成损坏的备份包。`,
+                        );
+                    }
+                    // 普通片包含括号和分隔符在内不超过上限；超大的单条单独写出。
+                    if (buffer.length && bufferLen + 1 + serialized.length > limits.maxLen) await flush();
+                    bufferLen += serialized.length + (buffer.length ? 1 : 0);
+                    buffer.push(serialized);
+                    count++;
+                    serialized = undefined;
+                    if (bufferLen >= limits.maxLen || buffer.length >= limits.maxItems) await flush();
+                }
+            } catch (error) {
+                fail(error);
+            } finally {
+                busy = false;
+            }
+        },
+        async finish(): Promise<{ parts: number; count: number }> {
+            begin();
+            try {
+                if (!finished) {
+                    await flush();
+                    finished = true;
+                }
+                return { parts, count };
+            } catch (error) {
+                return fail(error);
+            } finally {
+                busy = false;
+            }
+        },
+    };
+}
+
 export interface WriteV2Options {
     mode?: string;
     createdAt?: number;
@@ -86,6 +201,8 @@ export interface WriteV2Options {
      *  写进 memory_vectors.bin（二进制直写）+ .index.json，并在 manifest.vectors 记 count/byteLength。
      *  传了这个就不要再把 memoryVectors 放进 backupData（否则会被当普通数组又分片一遍）。 */
     vectors?: { bin: Uint8Array; index: VectorIndexEntry[] };
+    /** 已用 createV2StoreWriter 写完的表；backupData 中不得再有同名非 undefined 字段。 */
+    prewrittenStores?: BackupManifest['stores'];
 }
 
 /**
@@ -101,50 +218,25 @@ export async function writeV2Backup(
 ): Promise<BackupManifest> {
     const limits = options.limits || DEFAULT_SHARD_LIMITS;
     const onYield = options.onYield;
-    const manifestStores: Record<string, { parts: number; count: number }> = {};
+    const manifestStores: BackupManifest['stores'] = {};
+
+    // 在写入其它文件前检查冲突，不允许普通字段覆盖已完成的分片或被静默遗漏。
+    for (const [field, summary] of Object.entries(options.prewrittenStores || {})) {
+        if (backupData[field] !== undefined) {
+            throw new Error(`备份字段重复（${field}）：已分批写入，不能再次写入同名数据。`);
+        }
+        if (!Number.isSafeInteger(summary.parts) || summary.parts < 0 ||
+            !Number.isSafeInteger(summary.count) || summary.count < 0 ||
+            summary.parts > summary.count || (summary.parts === 0 && summary.count !== 0)) {
+            throw new Error(`备份分片统计无效（${field}），已中止导出。`);
+        }
+        manifestStores[field] = { ...summary };
+    }
 
     const shardArrayField = async (field: string, arr: any[]) => {
-        let buf: string[] = [];
-        let bufLen = 0;
-        let parts = 0;
-        let writtenCount = 0; // 实际写进分片的条数：可能 < arr.length（下面会跳过序列化成 undefined 的空洞）
-        const flush = () => {
-            if (buf.length === 0) return;
-            zip.file(shardFileName(field, parts), '[' + buf.join(',') + ']');
-            parts++;
-            buf = [];
-            bufLen = 0;
-        };
-        for (let i = 0; i < arr.length; i++) {
-            let s: string;
-            try {
-                s = JSON.stringify(arr[i]);
-            } catch (e: any) {
-                throw new Error(`备份序列化失败（${field} 第 ${i} 条）：${e?.message || e}`);
-            }
-            // JSON.stringify(undefined) === undefined；跳过空洞（putItems 释放后的占位等不会进这里，
-            // 但 backupData 的稀疏数组保险起见跳过），保持与 v1「JSON 丢弃 undefined」一致。
-            if (s === undefined) continue;
-            if (s.length > limits.hardMaxLen) {
-                throw new Error(
-                    `备份中有单条记录过大（${field}，约 ${Math.round(s.length / 1048576)}M 字符），` +
-                    `超出安全上限，已中止导出以免生成损坏的备份包。`,
-                );
-            }
-            // 单条就超软上限：先把已攒的 flush 掉，让这条独占一片（Finding 5）
-            if (s.length >= limits.maxLen && buf.length > 0) flush();
-            buf.push(s);
-            bufLen += s.length;
-            writtenCount++;
-            if (bufLen >= limits.maxLen || buf.length >= limits.maxItems) {
-                flush();
-                if (onYield) await onYield();
-            }
-        }
-        flush();
-        // count 用「实际写入条数」而非 arr.length：上面跳过了序列化成 undefined 的空洞，若仍按
-        // arr.length 记，导入端「拼出条数 === count」自洽校验会对一个本来合法的备份误判损坏 abort。
-        manifestStores[field] = { parts, count: writtenCount };
+        const writer = createV2StoreWriter(field, async (name, data) => { zip.file(name, data); }, { limits, onYield });
+        await writer.append(arr);
+        manifestStores[field] = await writer.finish();
     };
 
     // 一遍扫 backupData：数组字段分片（写完释放），其余非数组字段进 metadata。

@@ -1057,6 +1057,9 @@ const Settings: React.FC = () => {
               if (!window.confirm(`${msg}\n\n点「确定」继续导出，「取消」中止。`)) return;
           }
 
+          // Release the previous download before allocating the next archive.
+          revokeDownloadUrl();
+          setShowExportModal(false);
           // Trigger export (Context handles loading state UI)
           const blob = await exportSystem(mode);
           
@@ -1122,6 +1125,7 @@ const Settings: React.FC = () => {
               document.body.removeChild(a);
           }
       } catch (e: any) {
+          showError('备份导出失败', e?.message || '备份未能完成，请保持网页在前台后重试。');
           addToast(e.message, 'error');
       }
   };
