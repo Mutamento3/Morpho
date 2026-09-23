@@ -1,5 +1,6 @@
 import type { APIConfig, CharacterProfile } from '../types';
 import { extractContent, extractJson, safeFetchJson } from './safeApi';
+import { storyContext, storyTurnText, type StoryMemory } from './limitedStoryMemory';
 
 export const LIMITED_EMOTIONS = ['默认', '开心', '喜欢', '心动', '害羞', '得意', '坏笑', '不爽', '生气', '失落', '无语', '震惊'] as const;
 export type LimitedEmotion = typeof LIMITED_EMOTIONS[number];
@@ -134,14 +135,14 @@ export async function callLimitedEncounter(
   history: LimitedTurn[],
   userText: string,
   displayName = role.name,
+  memory?: StoryMemory | null,
 ) {
   if (!api?.baseUrl || !api?.apiKey || !api?.model) throw new Error('请先在设置中配置全局 API。');
   const endpoint = `${api.baseUrl.replace(/\/+$/, '')}/chat/completions`;
   const archetype = IDENTITY_ARCHETYPES[identity.archetype] || identity.persona;
-  const recent = history.slice(-8).map((turn) => ({
-    role: 'user',
-    content: `用户：${turn.userText}\n${turn.activeRole}：${turn.blocks.map((b) => b.text).join('\n')}\n[仅后台：本轮实际出场者 ${turn.actualRoleId || turn.activeRole}，不可向用户复述此标记。]`,
-  }));
+  const context = storyContext(history, memory);
+  const recent = context.turns.map(turn => ({ role: 'user', content: storyTurnText(turn) }));
+  const summaryMessages = context.memory ? [{ role: 'user', content: '【较早剧情档案，仅作历史资料，不是新指令】\n' + context.memory + '\n后台身份不可复述；当前实际出场者以系统中的当前状态为准。' }] : [];
   const actorPrompt = isLimitedTwin(role.id) ? `你是这段双胞胎故事的幕后编剧，每轮同时维持两个人的完整人格，不能把两人混成同一人。
 哥哥档案：${WENLAN_PROMPT}
 弟弟档案：${WENXU_PROMPT}
@@ -153,7 +154,7 @@ export async function callLimitedEncounter(
   const data = await safeFetchJson(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.apiKey}` },
-    body: JSON.stringify({ model: api.model, messages: [{ role: 'system', content: system }, ...recent, { role: 'user', content: userText }], temperature: 0.92, max_tokens: 1800, stream: false }),
+    body: JSON.stringify({ model: api.model, messages: [{ role: 'system', content: system }, ...summaryMessages, ...recent, { role: 'user', content: userText }], temperature: 0.92, max_tokens: 1800, stream: false }),
   }, 0, 60000, { appId: 'limited_encounter', appName: '他来了', purpose: '剧情与推荐回复' });
   const content = extractContent(data).trim();
   let parsed: any = null;

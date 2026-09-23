@@ -14,6 +14,7 @@ import {
   type LimitedTurn,
 } from '../utils/limitedEncounter';
 import './LimitedEncounterApp.css';
+import { STORY_RECENT_TURNS, summarizeStory, validStoryMemory, storyTurnKey, type StoryMemory } from '../utils/limitedStoryMemory';
 import type { CharacterProfile } from '../types';
 import { characterHasVoice } from '../utils/ttsRouter';
 import { fetchMiniMaxVoices, type MiniMaxVoiceItem } from '../utils/minimaxVoice';
@@ -43,7 +44,7 @@ const pixelEmotion: Record<string, string> = { 默认: '˙ᵕ˙', 开心: '◝(�
 
 const LimitedEncounterApp: React.FC = () => {
   const { closeApp, apiConfig, userProfile, characters, addToast } = useOS();
-  const initial = loadJson(STATE_KEY, { roleId: 'shen-wenlan', actualRoleId: '', roles: [] as LimitedRole[], turns: [] as LimitedTurn[], hidden: false, voiceSources: {} as Record<string, string>, voiceProfiles: {} as Record<string, VoiceProfile> });
+  const initial = loadJson(STATE_KEY, { roleId: 'shen-wenlan', actualRoleId: '', memory: null as StoryMemory | null, roles: [] as LimitedRole[], turns: [] as LimitedTurn[], hidden: false, voiceSources: {} as Record<string, string>, voiceProfiles: {} as Record<string, VoiceProfile> });
   const [customRoles] = useState<LimitedRole[]>(initial.roles || []);
   const allRoles = useMemo(() => [...BUILTIN_LIMITED_ROLES, ...customRoles], [customRoles]);
   const [roleId, setRoleId] = useState(initial.roleId || 'shen-wenlan');
@@ -51,6 +52,9 @@ const LimitedEncounterApp: React.FC = () => {
   const actualRole = allRoles.find(item => item.id === actualRoleId) || BUILTIN_LIMITED_ROLES[0];
   const role = allRoles.find(item => item.id === roleId) || BUILTIN_LIMITED_ROLES[0];
   const [turns, setTurns] = useState<LimitedTurn[]>(initial.turns || []);
+  const [memory, setMemory] = useState<StoryMemory | null>(initial.memory);
+  const [olderExpanded, setOlderExpanded] = useState(false);
+  const summaryAttempt = useRef('');
   const [hidden, setHidden] = useState(Boolean(initial.hidden));
   const [voiceSources] = useState<Record<string, string>>(initial.voiceSources || {});
   const [identity, setIdentity] = useState<LimitedIdentity | null>(() => {
@@ -74,9 +78,27 @@ const LimitedEncounterApp: React.FC = () => {
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    localStorage.setItem(STATE_KEY, JSON.stringify({ roleId, actualRoleId, roles: customRoles, turns, hidden, voiceSources, voiceProfiles }));
-  }, [roleId, actualRoleId, customRoles, turns, hidden, voiceSources, voiceProfiles]);
+    localStorage.setItem(STATE_KEY, JSON.stringify({ roleId, actualRoleId, roles: customRoles, turns, memory, hidden, voiceSources, voiceProfiles }));
+  }, [roleId, actualRoleId, customRoles, turns, memory, hidden, voiceSources, voiceProfiles]);
   useEffect(() => { scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' }); }, [turns.length, busy]);
+
+  useEffect(() => {
+    // Invalidate edited/deleted prefixes; never reuse future summaries for regeneration.
+    if (memory && !validStoryMemory(turns, memory)) { setMemory(null); return; }
+    if (busy || !apiConfig.baseUrl || !apiConfig.apiKey || !apiConfig.model) return;
+    const oldCount = Math.max(0, turns.length - STORY_RECENT_TURNS);
+    if (oldCount <= (memory?.sourceKeys.length || 0)) return;
+    const attempt = JSON.stringify([turns.map(storyTurnKey), memory?.sourceKeys.length, apiConfig.baseUrl, apiConfig.model]);
+    if (summaryAttempt.current === attempt) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      summaryAttempt.current = attempt;
+      void summarizeStory(apiConfig, turns, memory).then(next => {
+        if (!cancelled && next) setMemory(next);
+      }).catch(() => { /* Keep unsummarized original history; retry after the next story change. */ });
+    }, 800);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [turns, memory, busy, apiConfig.baseUrl, apiConfig.apiKey, apiConfig.model]);
 
   const latest = turns[turns.length - 1];
   const latestDialogue = [...(latest?.blocks || [])].reverse().find((block): block is Extract<LimitedBlock, { type: 'dialogue' }> => block.type === 'dialogue');
@@ -131,7 +153,7 @@ const LimitedEncounterApp: React.FC = () => {
       setTurns(prev => [...prev, { id: turnId, at: Date.now(), userText: message, activeRole: role.name, startRoleId: requestRole.id, actualRoleId: requestRole.id, blocks: [], suggestions: [] }]);
     }
     try {
-      const result = await callLimitedEncounter(apiConfig, requestRole, identity, history, message, role.name);
+      const result = await callLimitedEncounter(apiConfig, requestRole, identity, history, message, role.name, memory);
       const nextRole = allRoles.find(item => item.id === result.activeRole || item.name === result.activeRole);
       // Editing an earlier scene must not change the actor of the current scene.
       if (nextRole && (replaceIndex < 0 || replaceIndex === turns.length - 1)) {
@@ -200,6 +222,7 @@ const LimitedEncounterApp: React.FC = () => {
     if (busy || !confirmAction) return;
     cancelLongPress();
     if (confirmAction.type === 'restart') {
+      setMemory(null); setOlderExpanded(false); summaryAttempt.current = '';
       setTurns(identity ? [{ id: `prologue-${Date.now()}`, at: Date.now(), userText: '', activeRole: '序章', actualRoleId: 'shen-wenlan', startRoleId: 'shen-wenlan', blocks: [{ type: 'narration', text: makePrologue(identity.name) }], suggestions: ['按约定的时间出门。', '先发消息问他到了没有。', '临出门又换了一套衣服。'] }] : []);
       setRoleId('shen-wenlan'); setActualRoleId('shen-wenlan');
       setHidden(false); setText(''); setInputOpen(false); setRoleOpen(false);
@@ -227,9 +250,10 @@ const LimitedEncounterApp: React.FC = () => {
     if (!turns.length) setTurns([{ id: `prologue-${Date.now()}`, at: Date.now(), userText: '', activeRole: '序章', blocks: [{ type: 'narration', text: makePrologue(next.name) }], suggestions: ['按约定的时间出门。', '先发消息问他到了没有。', '临出门又换了一套衣服。'] }]);
   };
 
+  const olderCount = Math.max(0, turns.length - STORY_RECENT_TURNS);
   const visibleTurns = hidden && latest
     ? [{ ...latest, userText: '', blocks: latestDialogue ? [latestDialogue] : latest.blocks.slice(-1) }]
-    : turns;
+    : olderExpanded ? turns : turns.slice(-STORY_RECENT_TURNS);
 
   return <div className="le-app" style={{ backgroundImage: `linear-gradient(180deg,rgba(21,17,22,.12),rgba(18,13,17,.52)),url("${background}")` }}>
     <div className="le-topline">LIMITED ENCOUNTER · 01</div>
@@ -240,6 +264,7 @@ const LimitedEncounterApp: React.FC = () => {
     </div>
 
     <div ref={scroller} className={`le-story ${hidden ? 'is-hidden' : ''}`}>
+      {!hidden && olderCount > 0 && <button className="le-history-toggle" aria-expanded={olderExpanded} onClick={() => setOlderExpanded(value => !value)}>{olderExpanded ? '收起更早剧情' : `查看更早剧情（${olderCount}轮）`}</button>}
       {visibleTurns.map(turn => {
         const turnRole = allRoles.find(item => item.name === turn.activeRole) || role;
         return <React.Fragment key={turn.id}>

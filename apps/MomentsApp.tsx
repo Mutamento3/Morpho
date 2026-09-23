@@ -19,6 +19,8 @@ import {
     updateMomentAndSyncedCards,
 } from '../utils/moments';
 
+const MOMENTS_PAGE_SIZE = 20;
+
 const formatMomentTime = (timestamp: number): string => {
     const diff = Date.now() - timestamp;
     if (diff < 60_000) return '刚刚';
@@ -40,7 +42,7 @@ const fileToStoredMomentImage = async (file: File): Promise<string> => putImageB
 
 const ImageTile: React.FC<{ value: string; className?: string; onRemove?: () => void }> = ({ value, className = '', onRemove }) => (
     <div className={`relative overflow-hidden bg-slate-100 ${className}`}>
-        <TokenImg value={value} className="w-full h-full object-cover" alt="朋友圈图片" />
+        <TokenImg value={value} className="w-full h-full object-cover" alt="朋友圈图片" loading="lazy" decoding="async" />
         {onRemove && (
             <button onClick={onRemove} className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/55 text-white grid place-items-center">
                 <X size={14} weight="bold" />
@@ -97,9 +99,9 @@ const PostItem: React.FC<PostItemProps> = ({ post, userName, userAvatar, onLike,
     const totalComments = post.comments?.length || 0;
     const [visibleLikes, setVisibleLikes] = useState(animateInteractions ? 0 : totalLikes);
     const [visibleComments, setVisibleComments] = useState(animateInteractions ? 0 : totalComments);
-    const animatedPostRef = useRef<string | null>(null);
     const isUserLiked = !!post.likedBy?.some(x => x.type === 'user');
-    const gridClass = post.images.length === 1 ? 'grid-cols-1 max-w-[220px]' : post.images.length === 2 || post.images.length === 4 ? 'grid-cols-2 max-w-[250px]' : 'grid-cols-3 max-w-[270px]';
+    const images = Array.isArray(post.images) ? post.images : [];
+    const gridClass = images.length === 1 ? 'grid-cols-1 max-w-[220px]' : images.length === 2 || images.length === 4 ? 'grid-cols-2 max-w-[250px]' : 'grid-cols-3 max-w-[270px]';
 
     useEffect(() => {
         if (!animateInteractions) {
@@ -107,8 +109,6 @@ const PostItem: React.FC<PostItemProps> = ({ post, userName, userAvatar, onLike,
             setVisibleComments(totalComments);
             return;
         }
-        if (animatedPostRef.current === post.id) return;
-        animatedPostRef.current = post.id;
         setVisibleLikes(0);
         setVisibleComments(0);
         let likesShown = 0;
@@ -145,10 +145,10 @@ const PostItem: React.FC<PostItemProps> = ({ post, userName, userAvatar, onLike,
             <div className="min-w-0 flex-1">
                 <div className="text-[15px] font-semibold text-[#576b95] leading-5">{post.authorName || (post.authorType === 'user' ? userName : '')}</div>
                 {!!post.content && <div className="mt-1 text-[15px] leading-[1.55] text-slate-900 whitespace-pre-wrap break-words">{post.content}</div>}
-                {!!post.images.length && (
+                {!!images.length && (
                     <div className={`grid gap-1.5 mt-2 ${gridClass}`}>
-                        {post.images.map((img, index) => (
-                            <ImageTile key={`${img}-${index}`} value={img} className={post.images.length === 1 ? 'aspect-[4/5] rounded-sm' : 'aspect-square rounded-sm'} />
+                        {images.map((img, index) => (
+                            <ImageTile key={`${img}-${index}`} value={img} className={images.length === 1 ? 'aspect-[4/5] rounded-sm' : 'aspect-square rounded-sm'} />
                         ))}
                     </div>
                 )}
@@ -210,6 +210,12 @@ type MomentSendState = 'idle' | 'sending' | 'revealing' | 'error';
 const MomentsApp: React.FC = () => {
     const { closeApp, characters, userProfile, apiConfig, addToast } = useOS();
     const [posts, setPosts] = useState<SocialPost[]>([]);
+    const [visibleCount, setVisibleCount] = useState(MOMENTS_PAGE_SIZE);
+    const feedRef = useRef<HTMLDivElement>(null);
+    const showLatest = () => {
+        setVisibleCount(MOMENTS_PAGE_SIZE);
+        feedRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+    };
     const [settings, setSettings] = useState<MomentsSettings>(DEFAULT_MOMENTS_SETTINGS);
     const [loading, setLoading] = useState(true);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -264,6 +270,7 @@ const MomentsApp: React.FC = () => {
             const { author } = await generateRoleMoment({ characters, userProfile, apiConfig, settings: settingsOverride || settings });
             const next = await loadMomentPosts();
             setPosts(next);
+            showLatest();
             addToast(`${author.name}发了朋友圈`, 'success');
         } catch (err: any) {
             addToast(err?.message || '朋友圈生成失败', 'error');
@@ -312,6 +319,7 @@ const MomentsApp: React.FC = () => {
         try {
             const post = await createUserMoment({ ...draft, characters, userProfile, apiConfig, settings });
             setPosts(await loadMomentPosts());
+            showLatest();
             setRevealingPostId(post.id);
             setSendState('revealing');
         } catch (err: any) {
@@ -331,7 +339,7 @@ const MomentsApp: React.FC = () => {
 
     return (
         <div className="absolute inset-0 bg-white text-slate-900 overflow-hidden flex flex-col">
-            <div className="flex-1 overflow-y-auto overscroll-contain pb-10">
+            <div ref={feedRef} className="flex-1 overflow-y-auto overscroll-contain pb-10">
                 <div className="relative h-[315px] bg-[#d9d9d9] overflow-hidden">
                     {coverUrl ? (
                         <img src={coverUrl} className="w-full h-full object-cover" style={{ objectPosition: `center ${settings.coverPositionY}%` }} alt="朋友圈封面" />
@@ -355,7 +363,7 @@ const MomentsApp: React.FC = () => {
 
                 {loading ? (
                     <div className="py-16 text-center text-sm text-slate-400">正在打开朋友圈…</div>
-                ) : posts.length ? posts.map(post => (
+                ) : posts.length ? posts.slice(0, visibleCount).map(post => (
                     <PostItem key={post.id} post={post} userName={displayName} userAvatar={userProfile.avatar}
                         onLike={toggleLike} onComment={setCommentTarget} onDelete={removePost}
                         animateInteractions={post.id === revealingPostId}
@@ -370,6 +378,11 @@ const MomentsApp: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            {!loading && posts.length > MOMENTS_PAGE_SIZE && <div className="shrink-0 flex justify-center gap-4 bg-white border-t border-slate-100 px-4 py-2 text-xs text-[#576b95]">
+                {visibleCount < posts.length && <button className="px-3 py-2" onClick={() => setVisibleCount(count => count + MOMENTS_PAGE_SIZE)}>查看更早动态（还有{posts.length - visibleCount}条）</button>}
+                {visibleCount > MOMENTS_PAGE_SIZE && <button className="px-3 py-2" onClick={showLatest}>收起旧动态</button>}
+            </div>}
 
             {sendState !== 'idle' && (
                 <button
