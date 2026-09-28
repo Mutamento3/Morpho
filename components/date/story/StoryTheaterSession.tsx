@@ -45,6 +45,7 @@ import {
     retrieveMemories,
 } from '../../../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion } from '../../../utils/memoryPalace';
+import ExplorationNote from './ExplorationNote';
 import StoryQuickPresetPanel from './StoryQuickPresetPanel';
 import { StoryAppearanceButton } from './StoryTheaterTheme';
 import StoryImageSettingsButton from './StoryImageSettings';
@@ -204,6 +205,7 @@ const StoryOutput: React.FC<{ content: string; onChoose?: (text: string) => void
     return <div className='space-y-6'>
         {!hasScene && relationship}
         {blocks.map((block, index) => {
+            if (block.kind === 'exploration') return block.exploration ? <ExplorationNote key={index} note={block.exploration} /> : <div key={index} className='rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800'>{block.text}</div>;
             const lines = splitDisplayLines(block.text);
             if (block.kind === 'story') return <p key={index} className='font-serif text-[15px] leading-8 text-slate-800 whitespace-pre-wrap'>{block.text}</p>;
             if (block.kind === 'scene') return <section key={index} className='py-4 border-y border-slate-300'>

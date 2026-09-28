@@ -10,6 +10,8 @@ import type {
     StoryTheaterPresetPrompt,
     UserProfile,
 } from '../types';
+import expeditionPreset from '../assets/presets/morpho-expedition-v1.1.json';
+import { parseExplorationNote, type ExplorationNote } from './explorationNote';
 import nightScreeningV627 from '../assets/presets/night-screening-v6.14.sully.json';
 import {
     formatWorldbookSection,
@@ -57,12 +59,13 @@ export interface ResolvedStoryTheaterMask {
     characterId?: string;
 }
 
-export type StoryDisplayBlockKind = 'story' | 'scene' | 'backstage' | 'worldline' | 'debts' | 'theater' | 'choices' | 'affinity' | 'other';
+export type StoryDisplayBlockKind = 'story' | 'scene' | 'backstage' | 'worldline' | 'debts' | 'theater' | 'choices' | 'affinity' | 'exploration' | 'other';
 export interface StoryDisplayBlock {
     kind: StoryDisplayBlockKind;
     title?: string;
     text: string;
     theater?: StoryMiniTheaterDisplay;
+    exploration?: ExplorationNote;
 }
 
 export interface StoryMiniTheaterDisplayMessage {
@@ -473,9 +476,16 @@ export const BUILTIN_NIGHT_SCREENING_PRESET: StoryTheaterPreset = {
     updatedAt: 0,
 };
 
+export const BUILTIN_EXPEDITION_PRESET: StoryTheaterPreset = {
+    id: 'builtin-morpho-expedition', name: 'Morpho｜探险笔记 V1.1',
+    format: 'sullyos-story-preset', document: normalizeDocument(expeditionPreset, 'Morpho｜探险笔记 V1.1'),
+    builtIn: true, createdAt: 0, updatedAt: 0,
+};
+
 export const withBuiltInStoryPresets = (presets: StoryTheaterPreset[]): StoryTheaterPreset[] => [
     BUILTIN_NIGHT_SCREENING_PRESET,
-    ...presets.filter(preset => !preset.id.startsWith('builtin-night-screening')),
+    BUILTIN_EXPEDITION_PRESET,
+    ...presets.filter(preset => !preset.id.startsWith('builtin-night-screening') && preset.id !== BUILTIN_EXPEDITION_PRESET.id),
 ];
 
 /**
@@ -1005,6 +1015,7 @@ export const storyTheaterMemoryRecipientIds = (entry: StoryTheaterEntry): string
 };
 
 const DISPLAY_BLOCK_META: Record<string, { kind: StoryDisplayBlockKind; title?: string }> = {
+    explore_note: { kind: 'exploration', title: '探险笔记' },
     scene_header: { kind: 'scene', title: '这一幕' },
     story_text: { kind: 'story' },
     backstage: { kind: 'backstage', title: '幕后层' },
@@ -1132,7 +1143,7 @@ const formatTaggedStoryFragment = (fragment: string): string => {
 export const parseStoryDisplayBlocks = (content: string): StoryDisplayBlock[] => {
     const source = String(content || '');
     const blocks: StoryDisplayBlock[] = [];
-    const topLevel = /<(scene_header|story_text|backstage|mind_weather|worldline|world_line|shot_debts|mini_theater|reply_choices|affinity_panel)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi;
+    const topLevel = /<(explore_note|scene_header|story_text|backstage|mind_weather|worldline|world_line|shot_debts|mini_theater|reply_choices|affinity_panel)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi;
     let cursor = 0;
     let match: RegExpExecArray | null;
     const push = (kind: StoryDisplayBlockKind, text: string, title?: string) => {
@@ -1154,7 +1165,10 @@ export const parseStoryDisplayBlocks = (content: string): StoryDisplayBlock[] =>
     while ((match = topLevel.exec(source)) !== null) {
         if (match.index > cursor) push('story', source.slice(cursor, match.index));
         const meta = DISPLAY_BLOCK_META[match[1].toLowerCase()] || { kind: 'other' as const };
-        if (meta.kind === 'theater') {
+        if (meta.kind === 'exploration') {
+            const exploration = parseExplorationNote(match[2]);
+            blocks.push({ kind: 'exploration', title: '探险笔记', text: exploration ? '' : '这轮笔记格式不完整，可以重新生成本轮；原始记录已保留。', ...(exploration ? { exploration } : {}) });
+        } else if (meta.kind === 'theater') {
             pushTheater(match[2], meta.title);
         } else {
             push(meta.kind, match[2], meta.title);
@@ -1163,6 +1177,12 @@ export const parseStoryDisplayBlocks = (content: string): StoryDisplayBlock[] =>
     }
     if (cursor < source.length) {
         const tail = source.slice(cursor);
+        const unclosedNote = /<explore_note\b[^>]*>([\s\S]*)$/i.exec(tail);
+        if (unclosedNote) {
+            if (unclosedNote.index > 0) push('story', tail.slice(0, unclosedNote.index));
+            blocks.push({ kind: 'exploration', title: '探险笔记', text: '这轮笔记尚未完整生成；原始记录已保留。' });
+            return blocks;
+        }
         const unclosedTheater = /<mini_theater\b[^>]*>([\s\S]*)$/i.exec(tail);
         if (unclosedTheater) {
             if (unclosedTheater.index > 0) push('story', tail.slice(0, unclosedTheater.index));
