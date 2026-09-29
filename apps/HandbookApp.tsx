@@ -31,6 +31,7 @@ type CoverConfig = {
     avatarSize: number;
 };
 
+const PAGE_SCROLL_KEY = 'morpho_handbook_page_scroll_v1';
 const COVER_STORAGE_KEY = 'morpho_handbook_cover_v1';
 const BOOK_COLORS = ['#cdd8c5', '#dacbbf', '#cbd7e2', '#d9cad9', '#ded4b9', '#c5d9d4'];
 const ACCENT_COLORS = ['#4f6250', '#72594f', '#51677b', '#745873', '#74643f', '#466a64'];
@@ -129,7 +130,7 @@ const RichRun: React.FC<{ run: CharacterHandbookRun }> = ({ run }) => {
 };
 
 const DiaryCopy: React.FC<{ entry: CharacterHandbookEntry }> = ({ entry }) => (
-    <div className="space-y-2.5 text-[12px] leading-[1.72]">
+    <div className="space-y-2.5 break-words text-[12px] leading-[1.72]">
         {entry.paragraphs.map((paragraph, index) => (
             <p key={index}>
                 {paragraph.runs.map((run, runIndex) => <RichRun key={runIndex} run={run} />)}
@@ -288,18 +289,68 @@ const BookCover: React.FC<{
     );
 };
 
+// Scale the complete layout, not only its paper: fixed font/float dimensions must
+// share the same coordinate system on narrow screens and older mobile browsers.
+const HandbookPageFrame: React.FC<React.PropsWithChildren<{ animationClass: string }>> = ({ children, animationClass }) => {
+    const viewportRef = useRef<HTMLDivElement>(null);
+    const [scale, setScale] = useState(0);
+    useEffect(() => {
+        const viewport = viewportRef.current;
+        if (!viewport) return;
+        const measure = () => setScale(Math.max(0, Math.min(1, viewport.clientWidth / 370, viewport.clientHeight / 614)));
+        measure();
+        const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+        observer?.observe(viewport);
+        window.addEventListener('resize', measure);
+        return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
+    }, []);
+    return (
+        <div ref={viewportRef} className="flex h-full w-full items-center justify-center" style={{ minWidth: 0, minHeight: 0, WebkitTextSizeAdjust: '100%', textSizeAdjust: '100%' }}>
+            <div style={{ width: 370 * scale, height: 614 * scale, flexShrink: 0, visibility: scale ? 'visible' : 'hidden' }}>
+                <div style={{ width: 370, height: 574, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+                    <div className={`relative h-full w-full ${animationClass}`}>{children}</div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// In page mode fit unusually tall copy within the sheet; scrolling is opt-in.
+const HandbookPageBody: React.FC<React.PropsWithChildren<{ scrollEnabled: boolean; className?: string }>> = ({ scrollEnabled, className = '', children }) => {
+    const viewportRef = useRef<HTMLDivElement>(null);
+    const contentRef = useRef<HTMLDivElement>(null);
+    const [fit, setFit] = useState(1);
+    useEffect(() => {
+        const viewport = viewportRef.current;
+        const content = contentRef.current;
+        if (!viewport || !content) return;
+        const measure = () => setFit(Math.min(1, viewport.clientHeight / Math.max(1, content.scrollHeight)));
+        viewport.scrollTop = 0;
+        measure();
+        const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+        observer?.observe(viewport);
+        observer?.observe(content);
+        window.addEventListener('resize', measure);
+        return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
+    }, [scrollEnabled, children]);
+    return <div ref={viewportRef} className={`min-h-0 flex-1 overflow-x-hidden ${scrollEnabled ? 'overflow-y-auto' : 'overflow-hidden'} ${className}`}>
+        <div ref={contentRef} style={{ display: 'flow-root', paddingBottom: 4, transform: scrollEnabled ? undefined : `scale(${fit})`, transformOrigin: 'top left' }}>{children}</div>
+    </div>;
+};
+
 const HandbookDiaryPage: React.FC<{
     character: CharacterProfile;
     entry: CharacterHandbookEntry;
+    scrollEnabled: boolean;
     revealStep?: number;
     generating?: boolean;
-}> = ({ character, entry, revealStep = 4, generating = false }) => {
+}> = ({ character, entry, scrollEnabled, revealStep = 4, generating = false }) => {
     const stillUrl = useBlobRefUrl(entry.stillImage);
     const dateParts = entry.date.split('-');
     return (
-        <article className="handbook-paper relative h-full overflow-hidden rounded-[22px] border border-[#e6dccd] bg-[#fffaf0] px-7 pb-11 pt-8 text-[#4b433b] shadow-[0_18px_45px_rgba(80,65,50,0.12)]">
+        <article className="handbook-paper relative flex h-full flex-col overflow-hidden rounded-[22px] border border-[#e6dccd] bg-[#fffaf0] px-7 pb-11 pt-8 text-[#4b433b] shadow-[0_18px_45px_rgba(80,65,50,0.12)]">
             <div className="absolute left-7 top-0 h-7 w-16 -rotate-2 bg-[#f6d88c]/70" />
-            <header className="relative z-10 grid grid-cols-[.92fr_1.08fr] items-start gap-3">
+            <header className="relative z-10 shrink-0 grid grid-cols-[.92fr_1.08fr] items-start gap-3">
                 <div className={`pt-1 transition-all duration-700 ${revealStep >= 1 ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}>
                     <div className="text-[26px] font-semibold tracking-tight">{Number(dateParts[1])}月{Number(dateParts[2])}日</div>
                     <div className="mt-1 text-[12px] text-[#71695f]">{entry.weather.emoji} {entry.weather.description}{entry.weather.temp == null ? '' : ` / ${entry.weather.temp}℃`}</div>
@@ -310,12 +361,12 @@ const HandbookDiaryPage: React.FC<{
                     {stillUrl ? <img src={stillUrl} alt="手账静物横图" className="h-full w-full object-cover" /> : <div className="absolute inset-0 grid place-items-center text-[9px] tracking-[0.12em] text-[#746d65]"><ImageSquare size={20} className="mb-1" />等待静物图</div>}
                 </div>
             </header>
-            <div className={`relative z-10 mt-4 max-h-[350px] overflow-hidden transition-all duration-700 ${revealStep >= 3 ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}>
-                <div className="float-right -mr-3 ml-3 h-[360px] w-[42%]" style={{ shapeOutside: 'polygon(0 62%, 100% 62%, 100% 100%, 0 100%)' }}>
-                    <div className={`relative top-[62%] rotate-[2.5deg] transition-all duration-700 ${revealStep >= 4 ? 'scale-100 opacity-100' : 'scale-50 opacity-0'}`}><ChibiPortrait character={character} image={entry.chibiImage} /></div>
+            <HandbookPageBody scrollEnabled={scrollEnabled} className={`relative z-10 mt-4 transition-all duration-700 ${revealStep >= 3 ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}>
+                <div className="float-right mr-1 ml-3 h-[330px] w-[42%]" style={{ shapeOutside: 'polygon(0 60%, 100% 60%, 100% 100%, 0 100%)' }}>
+                    <div className={`relative top-[60%] rotate-[2.5deg] transition-all duration-700 ${revealStep >= 4 ? 'scale-100 opacity-100' : 'scale-50 opacity-0'}`}><ChibiPortrait character={character} image={entry.chibiImage} /></div>
                 </div>
                 <DiaryCopy entry={entry} />
-            </div>
+            </HandbookPageBody>
             <div className="absolute bottom-5 left-7 text-[10px] tracking-[0.14em] text-[#9b9186]">— {character.name}</div>
             {generating && (
                 <div className="absolute inset-x-0 bottom-5 z-30 flex justify-center">
@@ -345,7 +396,8 @@ const HandbookContinuationPage: React.FC<{
     entry: CharacterHandbookEntry;
     paragraphs: CharacterHandbookParagraph[];
     continuationIndex: number;
-}> = ({ character, entry, paragraphs, continuationIndex }) => {
+    scrollEnabled: boolean;
+}> = ({ character, entry, paragraphs, continuationIndex, scrollEnabled }) => {
     const dateParts = entry.date.split('-');
     const continuationEntry = { ...entry, paragraphs };
     return (
@@ -360,9 +412,9 @@ const HandbookContinuationPage: React.FC<{
                     <div className="rounded-full bg-[#efd7df] px-3 py-1 text-[9px] text-[#7c5463]">心情 · {entry.mood}</div>
                 </div>
             </header>
-            <div className="min-h-0 flex-1 pt-5">
+            <HandbookPageBody scrollEnabled={scrollEnabled} className="mt-5 break-words">
                 <DiaryCopy entry={continuationEntry} />
-            </div>
+            </HandbookPageBody>
             <div className="absolute bottom-6 right-8 text-[10px] tracking-[0.14em] text-[#9b9186]">— {character.name}</div>
         </article>
     );
@@ -389,11 +441,13 @@ const EndPage: React.FC<{ onGenerate: (regenerate: boolean) => void }> = ({ onGe
 );
 
 const ChibiSettingsPanel: React.FC<{
+    scrollEnabled: boolean;
+    onScrollChange: (enabled: boolean) => void;
     initial: HandbookChibiSettings;
     characters: CharacterProfile[];
     onClose: () => void;
     onSave: (settings: HandbookChibiSettings) => Promise<void>;
-}> = ({ initial, characters, onClose, onSave }) => {
+}> = ({ initial, characters, onClose, onSave, scrollEnabled, onScrollChange }) => {
     const [draft, setDraft] = useState<HandbookChibiSettings>(() => ({
         selectedPresetId: initial.selectedPresetId,
         customPresets: initial.customPresets.map(preset => ({ ...preset })),
@@ -439,10 +493,17 @@ const ChibiSettingsPanel: React.FC<{
         <div className="fixed inset-0 z-[140] flex items-end justify-center bg-black/25 backdrop-blur-[2px]" onClick={onClose}>
             <div className="max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-[28px] bg-[#f6f2eb] shadow-2xl" onClick={event => event.stopPropagation()}>
                 <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[#e1dbd1] bg-[#f8f5f0]/95 px-5 py-4 backdrop-blur">
-                    <div><h2 className="flex items-center gap-2 text-[16px] font-semibold"><GearSix size={18} /> Q版生图设置</h2><p className="mt-1 text-[10px] text-[#958b80]">手账本独立配置 · 不修改角色原画师串</p></div>
-                    <button type="button" onClick={onClose} aria-label="关闭Q版设置" className="grid h-9 w-9 place-items-center rounded-full bg-white/70"><X size={16} /></button>
+                    <div><h2 className="flex items-center gap-2 text-[16px] font-semibold"><GearSix size={18} /> 手账本设置</h2><p className="mt-1 text-[10px] text-[#958b80]">手账本独立配置 · 不修改角色原画师串</p></div>
+                    <button type="button" onClick={onClose} aria-label="关闭手账本设置" className="grid h-9 w-9 place-items-center rounded-full bg-white/70"><X size={16} /></button>
                 </header>
                 <div className="space-y-4 p-5" style={{ paddingBottom: 'calc(var(--safe-bottom, 0px) + 1.5rem)' }}>
+                    <section className="rounded-3xl bg-white/75 p-4 shadow-sm ring-1 ring-[#e7e0d7]">
+                        <label className="flex items-center justify-between gap-4 text-[12px] font-semibold text-[#6d645b]">
+                            允许页内滚动
+                            <input type="checkbox" checked={scrollEnabled} onChange={event => onScrollChange(event.target.checked)} className="h-4 w-4 accent-[#596151]" />
+                        </label>
+                        <p className="mt-2 text-[10px] leading-5 text-[#998f84]">默认关闭，整页展示并翻页阅读；开启后，较长内容可在纸页内上下滑动。此项立即生效。</p>
+                    </section>
                     <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] leading-5 text-amber-800">
                         如果你不知道这些参数是什么，请不要修改。默认预设为只读；需要换画师串时请先“新建预设”。
                     </div>
@@ -498,6 +559,13 @@ const HandbookApp: React.FC = () => {
     const [revealStep, setRevealStep] = useState(0);
     const [entries, setEntries] = useState<CharacterHandbookEntry[]>([]);
     const [loadingEntries, setLoadingEntries] = useState(false);
+    const [pageScrollEnabled, setPageScrollEnabled] = useState(() => {
+        try { return localStorage.getItem(PAGE_SCROLL_KEY) === 'true'; } catch { return false; }
+    });
+    const updatePageScroll = (enabled: boolean) => {
+        setPageScrollEnabled(enabled);
+        try { localStorage.setItem(PAGE_SCROLL_KEY, String(enabled)); } catch { /* Keep the choice for this session when storage is unavailable. */ }
+    };
     const [chibiSettingsOpen, setChibiSettingsOpen] = useState(false);
     const [chibiSettings, setChibiSettings] = useState<HandbookChibiSettings>({ selectedPresetId: DEFAULT_HANDBOOK_CHIBI_PRESET.id, customPresets: [], characterAnchors: {} });
     const [regeneratingPart, setRegeneratingPart] = useState<'text' | 'still' | 'chibi' | null>(null);
@@ -671,28 +739,20 @@ const HandbookApp: React.FC = () => {
                         </div>
                         {pageIndex === 0 && !draftCover && <button type="button" onClick={beginEditCover} className="flex items-center gap-1 rounded-full bg-white/70 px-3 py-2 text-[10px] shadow-sm active:scale-[0.98]"><PencilSimple size={13} /> 编辑封面</button>}
                         {draftCover && <div className="flex gap-1"><button type="button" onClick={() => setDraftCover(null)} aria-label="取消编辑" className="grid h-8 w-8 place-items-center rounded-full bg-white/65"><X size={15} /></button><button type="button" onClick={saveCover} aria-label="保存封面" className="grid h-8 w-8 place-items-center rounded-full bg-[#596151] text-white"><Check size={15} weight="bold" /></button></div>}
-                        <button type="button" onClick={() => void openChibiSettings()} aria-label="Q版生图设置" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><GearSix size={18} /></button>
+                        <button type="button" onClick={() => void openChibiSettings()} aria-label="手账本设置" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><GearSix size={18} /></button>
                     </div>
                 </header>
 
-                <main className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-5 py-6" style={{ containerType: 'size' }}>
-                    <div
-                        key={`${pageIndex}-${direction}`}
-                        className={`relative shrink-0 ${direction === 'next' ? 'handbook-page-next' : 'handbook-page-prev'}`}
-                        style={{
-                            // 在 B 系纸张基础上略微加长，给 3～5 段正文与贴图留出更舒展的纵向空间。
-                            aspectRatio: '1 / 1.55',
-                            width: 'min(370px, calc(100cqw - 2.5rem), calc((100cqh - 3rem) / 1.55))',
-                        }}
-                    >
+                <main className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-5 py-6">
+                    <HandbookPageFrame key={`${pageIndex}-${direction}`} animationClass={direction === 'next' ? 'handbook-page-next' : 'handbook-page-prev'}>
                         {pageIndex === 0 && <BookCover character={openNotebook.character} config={activeCover} editing={Boolean(draftCover)} onAvatarMove={(avatarX, avatarY) => setDraftCover(current => current ? ({ ...current, avatarX, avatarY }) : current)} onAvatarResize={(avatarSize) => setDraftCover(current => current ? ({ ...current, avatarSize }) : current)} />}
-                        {visibleSheet?.kind === 'decorated' && <HandbookDiaryPage character={openNotebook.character} entry={{ ...visibleSheet.entry, paragraphs: visibleSheet.paragraphs }} revealStep={visibleSheet.entry.date === today && generationState === 'generating' ? revealStep : 4} generating={visibleSheet.entry.date === today && generationState === 'generating'} />}
+                        {visibleSheet?.kind === 'decorated' && <HandbookDiaryPage scrollEnabled={pageScrollEnabled} character={openNotebook.character} entry={{ ...visibleSheet.entry, paragraphs: visibleSheet.paragraphs }} revealStep={visibleSheet.entry.date === today && generationState === 'generating' ? revealStep : 4} generating={visibleSheet.entry.date === today && generationState === 'generating'} />}
                         {visibleSheet?.kind === 'decorated' && <HandbookRegenerationControls regeneratingPart={regeneratingPart} generating={visibleSheet.entry.date === today && generationState === 'generating'} onRegenerate={kind => void regenerateEntryPart(visibleSheet.entry, kind)} />}
-                        {visibleSheet?.kind === 'continuation' && <HandbookContinuationPage character={openNotebook.character} entry={visibleSheet.entry} paragraphs={visibleSheet.paragraphs} continuationIndex={visibleSheet.continuationIndex} />}
+                        {visibleSheet?.kind === 'continuation' && <HandbookContinuationPage scrollEnabled={pageScrollEnabled} character={openNotebook.character} entry={visibleSheet.entry} paragraphs={visibleSheet.paragraphs} continuationIndex={visibleSheet.continuationIndex} />}
                         {blankGeneratingPage && <EmptyGeneratingPage />}
                         {!loadingEntries && pageIndex === pageCount - 1 && <EndPage onGenerate={showTodayPage} />}
                         {loadingEntries && pageIndex > 0 && <div className="handbook-paper grid h-full place-items-center rounded-[22px] border border-[#e6dccd] bg-[#fffaf0] text-[11px] text-[#8b8176]">正在翻开手账……</div>}
-                    </div>
+                    </HandbookPageFrame>
 
                     {draftCover && (
                         <div className="absolute inset-x-5 bottom-5 z-20 rounded-[20px] border border-white/70 bg-[#f8f5f0]/95 p-4 shadow-[0_14px_40px_rgba(65,55,46,0.22)] backdrop-blur">
@@ -737,7 +797,7 @@ const HandbookApp: React.FC = () => {
                         <button type="button" onClick={() => goToPage(pageCount - 1)} disabled={pageIndex === pageCount - 1} className="flex items-center gap-1 rounded-full px-2 py-2 text-[10px] text-[#777067] disabled:opacity-30">末页 <SkipForward size={15} /></button>
                     </nav>
                 )}
-                {chibiSettingsOpen && <ChibiSettingsPanel initial={chibiSettings} characters={characters} onClose={() => setChibiSettingsOpen(false)} onSave={persistChibiSettings} />}
+                {chibiSettingsOpen && <ChibiSettingsPanel scrollEnabled={pageScrollEnabled} onScrollChange={updatePageScroll} initial={chibiSettings} characters={characters} onClose={() => setChibiSettingsOpen(false)} onSave={persistChibiSettings} />}
             </div>
         );
     }
@@ -748,13 +808,13 @@ const HandbookApp: React.FC = () => {
                 <div className="flex h-14 items-center gap-3 px-4">
                     <button type="button" onClick={closeApp} aria-label="关闭手账本" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><CaretLeft size={21} weight="bold" /></button>
                     <div className="min-w-0 flex-1"><h1 className="text-[16px] font-semibold">手账本</h1><p className="text-[11px] text-[#8b857b]">每个角色一本</p></div>
-                    <button type="button" onClick={() => void openChibiSettings()} aria-label="Q版生图设置" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><GearSix size={19} /></button>
+                    <button type="button" onClick={() => void openChibiSettings()} aria-label="手账本设置" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><GearSix size={19} /></button>
                 </div>
             </header>
             <main className="px-5 py-6">
                 {notebooks.length > 0 ? <div className="grid grid-cols-2 gap-5">{notebooks.map(({ character, config }) => <button key={character.id} type="button" onClick={() => { setEntries([]); setOpenCharacterId(character.id); setPageIndex(0); setGenerationState('idle'); setRevealStep(0); }} className="aspect-[3/4] min-w-0 text-left transition-transform active:scale-[0.98]"><BookCover character={character} config={config} /></button>)}</div> : <div className="py-16 text-center text-sm text-[#8b857b]">神经链接中还没有角色</div>}
             </main>
-            {chibiSettingsOpen && <ChibiSettingsPanel initial={chibiSettings} characters={characters} onClose={() => setChibiSettingsOpen(false)} onSave={persistChibiSettings} />}
+            {chibiSettingsOpen && <ChibiSettingsPanel scrollEnabled={pageScrollEnabled} onScrollChange={updatePageScroll} initial={chibiSettings} characters={characters} onClose={() => setChibiSettingsOpen(false)} onSave={persistChibiSettings} />}
         </div>
     );
 };
