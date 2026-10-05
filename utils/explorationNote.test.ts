@@ -19,6 +19,19 @@ describe('Morpho native expedition preset', () => {
     expect(note.content).not.toContain('<style>');
     expect(note.content).not.toContain('<div');
   });
+  it('upgrades existing expedition sessions with the new boundary while preserving toggle choices', () => {
+    const preset = BUILTIN_EXPEDITION_PRESET;
+    const legacy = { ...preset.document, prompts: preset.document.prompts
+      .filter(p => p.id !== 'exp-v1-immersive-boundaries')
+      .map(p => p.id === 'exp-v1-explore-note' ? { ...p, enabled: false } : p) };
+    const resolved = resolveStoryPresetDocument(preset, legacy);
+    const boundary = resolved.prompts.find(p => p.id === 'exp-v1-immersive-boundaries');
+    expect(boundary?.enabled).toBe(true);
+    expect(boundary?.role).toBe('system');
+    expect(boundary?.content).toContain('现代背景');
+    expect(resolved.prompts.find(p => p.id === 'exp-v1-explore-note')?.enabled).toBe(false);
+    expect(resolveStoryPresetDocument({ ...preset, builtIn: false }, legacy)).toBe(legacy);
+  });
   it('keeps prose separate and passes structured panel data to the renderer', () => {
     const raw = `<story_text>石门动了一下。</story_text><explore_note>${JSON.stringify(sample)}</explore_note>`;
     const blocks = parseStoryDisplayBlocks(raw);

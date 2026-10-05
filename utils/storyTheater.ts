@@ -10,7 +10,7 @@ import type {
     StoryTheaterPresetPrompt,
     UserProfile,
 } from '../types';
-import expeditionPreset from '../assets/presets/morpho-expedition-v1.1.json';
+import expeditionPreset from '../assets/presets/morpho-expedition-v1.2.json';
 import { parseExplorationNote, type ExplorationNote } from './explorationNote';
 import nightScreeningV627 from '../assets/presets/night-screening-v6.14.sully.json';
 import {
@@ -477,8 +477,8 @@ export const BUILTIN_NIGHT_SCREENING_PRESET: StoryTheaterPreset = {
 };
 
 export const BUILTIN_EXPEDITION_PRESET: StoryTheaterPreset = {
-    id: 'builtin-morpho-expedition', name: 'Morpho｜探险笔记 V1.1',
-    format: 'sullyos-story-preset', document: normalizeDocument(expeditionPreset, 'Morpho｜探险笔记 V1.1'),
+    id: 'builtin-morpho-expedition', name: 'Morpho｜探险笔记 V1.2',
+    format: 'sullyos-story-preset', document: normalizeDocument(expeditionPreset, 'Morpho｜探险笔记 V1.2'),
     builtIn: true, createdAt: 0, updatedAt: 0,
 };
 
