@@ -1,3 +1,4 @@
+import { buildSleepReminderGuard } from './sleepReminderGuard';
 
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, DailySchedule } from '../types';
 import { ContextBuilder } from './context';
@@ -869,6 +870,8 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
 只有一件事始终不变。
 
 每一句话，都应该像是不经意间，从 ${char.name} 心里自然冒出来的。`;
+
+        recencyTail += buildSleepReminderGuard(char);
 
         const perfTotal = Math.round(performance.now() - perfT0);
         const timingStr = Object.entries(timings)

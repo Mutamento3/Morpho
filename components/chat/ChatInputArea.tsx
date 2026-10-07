@@ -42,6 +42,7 @@ interface ChatInputAreaProps {
     // Proactive messaging
     isProactiveActive?: boolean;
     // HTML 模块模式
+    sleepGuardEnabled?: boolean;
     htmlModeEnabled?: boolean;
     // 思考过程展示（会话级）
     showThinkingChain?: boolean;
@@ -68,6 +69,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     categories = [], activeCategory = 'default',
     onReroll, canReroll,
     isProactiveActive,
+    sleepGuardEnabled = false,
     htmlModeEnabled = false,
     showThinkingChain = false,
     imageGenerationEnabled = false,
@@ -644,6 +646,10 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             onClickCapture={handleActionsClickCapture}
                         >
                           <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 0 ? '' : 'hidden'}`}>
+                            <button type="button" onClick={() => onPanelAction('sleep-guard')} aria-label={sleepGuardEnabled ? '防催睡，已开启' : '防催睡，未开启'} className="flex flex-col items-center gap-2 active:scale-95">
+                                <div className={`flex h-14 w-14 items-center justify-center rounded-2xl border shadow-sm ${sleepGuardEnabled ? 'border-violet-300 bg-violet-100 text-violet-600' : isDiscordStyle ? 'border-white/10 bg-slate-800 text-slate-300' : 'border-slate-100 bg-slate-50 text-slate-500'}`}><ChatCircleDots className="h-6 w-6" weight={sleepGuardEnabled ? 'fill' : 'regular'} /></div>
+                                <span className={`text-xs font-bold ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>防催睡{sleepGuardEnabled ? ' · 开' : ''}</span>
+                            </button>
                             {/* 见面：直接跳到该角色的见面模式（等同于进见面 App 并点击该角色） */}
                             <button onClick={() => onPanelAction('meetup')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-violet-300 border-violet-400/20' : 'bg-violet-50 text-violet-500 border-violet-100'}`}>

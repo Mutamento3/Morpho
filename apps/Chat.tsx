@@ -1,3 +1,4 @@
+import SleepReminderGuardModal from '../components/chat/SleepReminderGuardModal';
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
@@ -105,6 +106,8 @@ const Chat: React.FC = () => {
             return getMemoryPalaceHighWaterMark(charId);
         } catch { return 0; }
     }, []);
+    const [showSleepGuard, setShowSleepGuard] = useState(false);
+    useEffect(() => { setShowSleepGuard(false); }, [activeCharacterId]);
     const [messages, setMessages] = useState<Message[]>([]);
     const [regeneratingGeneratedImageIds, setRegeneratingGeneratedImageIds] = useState<Set<number>>(new Set());
     // Instant Push 路径："准备中"三个点 = 消息正在拼接+发送; 消失 = SSE POST 已排进
@@ -1544,6 +1547,11 @@ const Chat: React.FC = () => {
                     updateCharacter(char.id, { htmlModeEnabled: true } as any);
                 }
                 setModalType('chat-settings');
+                break;
+            }
+            case 'sleep-guard': {
+                setShowPanel('none');
+                setShowSleepGuard(true);
                 break;
             }
             case 'thinking-settings': {
@@ -3778,6 +3786,7 @@ const Chat: React.FC = () => {
                     onReroll={handleReroll}
                     canReroll={canReroll}
                     isProactiveActive={isProactiveActive}
+                    sleepGuardEnabled={!!char.sleepReminderGuard?.enabled}
                     htmlModeEnabled={!!(char as any).htmlModeEnabled}
                     showThinkingChain={!!(char as any).showThinkingChain}
                     imageGenerationEnabled={!!char.imageGeneration?.enabled}
@@ -3789,6 +3798,12 @@ const Chat: React.FC = () => {
                 />
             </div>
 
+
+            {char && showSleepGuard && <SleepReminderGuardModal key={char.id} char={char} onClose={() => setShowSleepGuard(false)} onSave={settings => {
+                updateCharacter(char.id, { sleepReminderGuard: settings });
+                setShowSleepGuard(false);
+                addToast(settings.enabled ? '防催睡已开启，从下一次回复生效' : '防催睡已关闭', 'success');
+            }} />}
 
             {/* Proactive Settings Modal */}
             {char && (

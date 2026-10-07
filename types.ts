@@ -2310,6 +2310,8 @@ export interface CharMusicProfile {
 }
 
 export interface CharacterProfile {
+  /** 私聊防催睡：按角色保存，默认关闭。 */
+  sleepReminderGuard?: { enabled: boolean; boundaries?: string };
   id: string;
   name: string;
   avatar: string;
