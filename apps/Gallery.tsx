@@ -14,6 +14,11 @@ const Gallery: React.FC = () => {
     const [activeCharId, setActiveCharId] = useState<string | null>(null);
     const [images, setImages] = useState<GalleryImage[]>([]);
     const [selectedImage, setSelectedImage] = useState<GalleryImage | null>(null);
+    const [selectionMode, setSelectionMode] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [isDeleting, setIsDeleting] = useState(false);
+    const deletingRef = useRef(false);
+    const exitSelection = () => { setSelectionMode(false); setSelectedIds(new Set()); };
     const [isReviewing, setIsReviewing] = useState(false);
     const [showChatContext, setShowChatContext] = useState(false);
 
@@ -38,27 +43,66 @@ const Gallery: React.FC = () => {
     }, [characters, view]);
 
     useEffect(() => {
+        let cancelled = false;
         if (activeCharId) {
             DB.getGalleryImages(activeCharId).then(imgs => {
-                setImages(imgs.sort((a, b) => b.timestamp - a.timestamp));
+                if (!cancelled) setImages(imgs.sort((a, b) => b.timestamp - a.timestamp));
             });
         }
+        return () => { cancelled = true; };
     }, [activeCharId]);
 
     const handleCharClick = (id: string) => {
+        exitSelection();
+        setImages([]);
         setActiveCharId(id);
         setView('grid');
     };
 
     const handleImageClick = (img: GalleryImage) => {
+        if (isDeleting) return;
+        if (selectionMode) {
+            setSelectedIds(current => { const next = new Set(current); next.has(img.id) ? next.delete(img.id) : next.add(img.id); return next; });
+            return;
+        }
         setSelectedImage(img);
         setView('detail');
     };
 
     const handleBack = () => {
+        if (deletingRef.current) return;
+        if (selectionMode) { exitSelection(); return; }
         if (view === 'detail') { setView('grid'); setShowChatContext(false); }
         else if (view === 'grid') { setView('albums'); setActiveCharId(null); }
         else closeApp();
+    };
+
+    const handleDeleteSelected = () => {
+        const ids = images.filter(img => selectedIds.has(img.id)).map(img => img.id);
+        if (!ids.length || deletingRef.current) return;
+        setConfirmDialog({
+            isOpen: true, title: '删除所选照片', variant: 'danger',
+            message: `确定删除选中的 ${ids.length} 张照片吗？仅从相册移除，聊天中的图片和消息会保留。相册删除无法撤销。`,
+            onConfirm: async () => {
+                if (deletingRef.current) return;
+                deletingRef.current = true;
+                setIsDeleting(true);
+                setConfirmDialog(null);
+                try {
+                    await DB.deleteGalleryImages(ids);
+                    const removed = new Set(ids);
+                    setImages(current => current.filter(img => !removed.has(img.id)));
+                    exitSelection();
+                    addToast(`已从相册删除 ${ids.length} 张照片`, 'success');
+                } catch (error) {
+                    console.error('Gallery batch delete failed:', error);
+                    addToast('删除失败，请重试，所选照片已保留', 'error');
+                } finally {
+                    deletingRef.current = false;
+                    setIsDeleting(false);
+                }
+            },
+        });
     };
 
     // Long-press handlers for album deletion
@@ -285,7 +329,7 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
     );
 
     const renderGrid = () => (
-        <div className="flex-1 overflow-y-auto p-1.5 animate-fade-in">
+        <div className="min-h-0 flex-1 overflow-y-auto p-1.5 animate-fade-in">
             {images.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-slate-300 gap-3 py-20">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor" className="w-14 h-14 opacity-40"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
@@ -294,11 +338,12 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
             ) : (
                 <div className="grid grid-cols-3 gap-1">
                     {images.map(img => (
-                        <div key={img.id} onClick={() => handleImageClick(img)} className="aspect-square bg-slate-100 relative cursor-pointer overflow-hidden rounded-sm">
+                        <button type="button" key={img.id} disabled={isDeleting} aria-label={selectionMode ? `${selectedIds.has(img.id) ? '取消选择' : '选择'}照片 ${img.savedDate || img.id}` : `查看照片 ${img.savedDate || img.id}`} aria-pressed={selectionMode ? selectedIds.has(img.id) : undefined} onClick={() => handleImageClick(img)} className="aspect-square bg-slate-100 relative cursor-pointer overflow-hidden rounded-sm">
                             <TokenImg value={img.url} className="w-full h-full object-cover hover:scale-105 transition-transform duration-300" loading="lazy" />
-                            {img.review && <div className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full ring-2 ring-white shadow-sm"></div>}
+                            {!selectionMode && img.review && <div className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full ring-2 ring-white shadow-sm"></div>}
                             {img.savedDate && <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/50 to-transparent px-1.5 pb-1 pt-3"><span className="text-[8px] text-white/80 font-mono">{img.savedDate}</span></div>}
-                        </div>
+                            {selectionMode && <div aria-hidden="true" className={`absolute inset-0 border-2 ${selectedIds.has(img.id) ? 'border-primary bg-primary/10' : 'border-transparent'}`}><span className={`absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full border-2 border-white text-sm font-bold shadow ${selectedIds.has(img.id) ? 'bg-primary text-white' : 'bg-black/20'}`}>{selectedIds.has(img.id) ? '✓' : ''}</span></div>}
+                        </button>
                     ))}
                 </div>
             )}
@@ -413,12 +458,18 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                             {view === 'albums' ? '相册' : characters.find(c => c.id === activeCharId)?.name || '相册'}
                         </h1>
                         {view === 'grid' && <span className="text-xs text-slate-400 ml-2 font-mono">{images.length}</span>}
+                        {view === 'grid' && <button type="button" disabled={isDeleting || (!selectionMode && images.length === 0)} onClick={() => selectionMode ? exitSelection() : setSelectionMode(true)} className="ml-auto shrink-0 rounded-full px-3 py-2 text-sm font-semibold text-primary disabled:opacity-40">{selectionMode ? '取消' : '多选'}</button>}
                     </div>
                 </div>
             )}
 
             {view === 'albums' && <div className="flex-1 overflow-y-auto min-h-0">{renderAlbums()}</div>}
             {view === 'grid' && renderGrid()}
+            {view === 'grid' && selectionMode && <div className="flex shrink-0 items-center gap-3 border-t border-slate-200 bg-white px-4 pt-3" style={{ paddingBottom: 'calc(var(--safe-bottom, 0px) + 0.75rem)' }}>
+                <button type="button" disabled={isDeleting || images.length === 0} onClick={() => setSelectedIds(selectedIds.size === images.length ? new Set() : new Set(images.map(img => img.id)))} className="shrink-0 py-2 text-sm text-primary disabled:opacity-40">{images.length > 0 && selectedIds.size === images.length ? '取消全选' : '全选'}</button>
+                <span aria-live="polite" className="flex-1 text-xs text-slate-500">已选 {selectedIds.size} 张</span>
+                <button type="button" disabled={isDeleting || selectedIds.size === 0} onClick={handleDeleteSelected} className="rounded-xl bg-rose-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{isDeleting ? '删除中…' : '删除已选'}</button>
+            </div>}
             {view === 'detail' && renderDetail()}
         </div>
     );

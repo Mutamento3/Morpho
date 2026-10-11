@@ -1168,6 +1168,22 @@ export const DB = {
       transaction.objectStore(STORE_ASSETS).put({ id, data });
   },
 
+  updateAssetRaw: async (id: string, update: (current: any | null) => any): Promise<void> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_ASSETS, 'readwrite');
+      const store = transaction.objectStore(STORE_ASSETS);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('保存失败'));
+      transaction.onabort = () => reject(transaction.error || new Error('保存已取消'));
+      const request = store.get(id);
+      request.onsuccess = () => {
+        try { store.put({ id, data: update(request.result?.data ?? null) }); }
+        catch (error) { transaction.abort(); reject(error); }
+      };
+    });
+  },
+
   deleteAsset: async (id: string): Promise<void> => {
     const db = await openDB();
     return new Promise((resolve, reject) => {
@@ -1287,6 +1303,20 @@ export const DB = {
       const db = await openDB();
       const transaction = db.transaction(STORE_GALLERY, 'readwrite');
       transaction.objectStore(STORE_GALLERY).delete(id);
+  },
+
+  // Delete album records atomically; chat messages and shared image assets remain intact.
+  deleteGalleryImages: async (ids: string[]): Promise<void> => {
+      if (!ids.length) return;
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_GALLERY, 'readwrite');
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error || new Error('相册删除失败'));
+          transaction.onabort = () => reject(transaction.error || new Error('相册删除已取消'));
+          const store = transaction.objectStore(STORE_GALLERY);
+          for (const id of new Set(ids)) store.delete(id);
+      });
   },
 
   // --- XHS Stock Images ---

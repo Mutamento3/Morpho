@@ -1,3 +1,5 @@
+import StoryImageAlbum from './StoryImageAlbum';
+import { syncStoryImageAlbum } from '../../../utils/storyImageAlbum';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, ArrowBendDownRight, ArrowClockwise, ArrowLeft, Broadcast, CaretDown, CaretLeft, CaretRight, ChatCircleDots, Clock, Database, Eye, EyeSlash, FilmSlate, GearSix, HeartStraight, ImageSquare, Key, MapPin, PaperPlaneTilt, PencilSimple, SlidersHorizontal, SpinnerGap, Trash, X } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
@@ -326,6 +328,8 @@ const StoryRoundVisuals: React.FC<{
 
 const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, onEdit, onOpenVectorMemory, onEntryChange }) => {
     const { characters, userProfile, apiConfig, memoryPalaceConfig, remoteVectorConfig, updateCharacter, addToast, showError } = useOS();
+    const albumToastRef = useRef(addToast);
+    albumToastRef.current = addToast;
     const threadId = storyTheaterThreadId(entry.id);
     const actors = useMemo(() => characters.filter(char => entry.characterIds.includes(char.id)), [characters, entry.characterIds]);
     const memoryActors = useMemo(() => {
@@ -343,6 +347,8 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
     const affinityEnabled = useMemo(() => effectivePreset.document.prompts.some(prompt => prompt.id === 'nmj-v65-affinity-control' && prompt.enabled), [effectivePreset.document]);
     const selectedBooks = useMemo(() => dedupeTheaterWorldbooks(actors).filter(book => entry.selectedWorldbookIds.includes(book.id)), [actors, entry.selectedWorldbookIds]);
     const [messages, setMessages] = useState<Message[]>([]);
+    const [showImageAlbum, setShowImageAlbum] = useState(false);
+    const [albumRevision, setAlbumRevision] = useState(0);
     const [input, setInput] = useState('');
     const [sending, setSending] = useState(false);
     const [memoryStatus, setMemoryStatus] = useState('');
@@ -367,8 +373,9 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
 
     const loadMessages = useCallback(async () => {
         const rows = await DB.getMessagesByCharId(threadId, true);
+        try { await syncStoryImageAlbum(entry.id, rows); setAlbumRevision(value => value + 1); } catch (error) { console.error('剧情相册收录失败', error); albumToastRef.current('剧情已保留，相册收录失败，重新打开剧情可重试', 'error'); }
         setMessages(rows.filter(message => message.metadata?.source === 'story_theater').sort((a, b) => a.id - b.id));
-    }, [threadId]);
+    }, [threadId, entry.id]);
 
     useEffect(() => { void loadMessages(); }, [loadMessages]);
 
@@ -937,6 +944,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                     <CaretDown size={13} className='shrink-0 text-slate-400 transition-transform group-open:rotate-180' />
                 </summary>
                 <div className='mx-5 mb-3 pt-3 border-t border-slate-200 grid grid-cols-2 gap-x-6 gap-y-3 text-[10px]'>
+                    <button onClick={() => setShowImageAlbum(true)} className='col-span-2 flex items-center gap-2 rounded-xl bg-white px-3 py-3 text-xs font-semibold text-violet-600'><ImageSquare size={17} />剧情相册</button>
                     <div><span className='block text-[8px] font-bold text-slate-400'>你</span><span className='block mt-1 truncate text-slate-600'>{mask.selection.type === 'user' ? '本人' : mask.name}</span></div>
                     <div><span className='block text-[8px] font-bold text-slate-400'>记忆方式</span><span className='block mt-1 truncate text-slate-600'>{entry.writesToCharacterMemory ? '写入角色记忆' : entry.archiveStrategy === 'summary' ? '独立事件盒' : '独立向量分区'}</span></div>
                     <div><span className='block text-[8px] font-bold text-slate-400'>结尾模块</span><span className='block mt-1 truncate text-slate-600'>{activeMiniTheater?.name || '未启用小剧场'}</span></div>
@@ -1031,6 +1039,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             onReset={async () => { await onEntryChange({ ...entry, presetOverride: undefined, updatedAt: Date.now() }); addToast('已恢复本剧情的原预设', 'info'); }}
             onClose={() => setShowQuickPreset(false)}
         />}
+        {showImageAlbum && <StoryImageAlbum key={entry.id} storyId={entry.id} title={entry.title} revision={albumRevision} onClose={() => setShowImageAlbum(false)} />}
         {messageMenu && <div className='fixed inset-0 z-[70] flex items-end bg-slate-900/25' onClick={() => setMessageMenu(null)}>
             <div className='story-safe-sheet w-full rounded-t-3xl bg-stone-100 px-5 pt-4 shadow-2xl' onClick={event => event.stopPropagation()}>
                 <div className='mx-auto mb-4 h-1 w-9 rounded-full bg-slate-300' />
