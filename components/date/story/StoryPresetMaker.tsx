@@ -28,6 +28,16 @@ export interface StoryPresetSimpleChoice {
 
 export const STORY_PRESET_SIMPLE_CHOICES: StoryPresetSimpleChoice[] = [
     {
+        label: '开局感染程度', hint: '选择新故事的世界起点；已有剧情不会因切换而重置，换起点请新开故事',
+        ids: ['bio-v1-stage-initial', 'bio-v1-stage-spread', 'bio-v1-stage-apocalypse'],
+        options: [{ id: 'bio-v1-stage-initial', label: '初期' }, { id: 'bio-v1-stage-spread', label: '扩散' }, { id: 'bio-v1-stage-apocalypse', label: '末世' }],
+    },
+    {
+        label: '主角团阵营', hint: '选择初始身份与资源；变异者保留人格，已有经历不会随切换改写',
+        ids: ['bio-v1-faction-human', 'bio-v1-faction-umbrella', 'bio-v1-faction-variant'],
+        options: [{ id: 'bio-v1-faction-human', label: '普通人类' }, { id: 'bio-v1-faction-umbrella', label: '保护伞卧底' }, { id: 'bio-v1-faction-variant', label: '变异者' }],
+    },
+    {
         label: '文风', hint: '决定这场故事读起来是什么质感',
         ids: ['nmj-v3-style-custom', 'nmj-v3-style-soda', 'nmj-v3-style-corridor', 'nmj-v3-style-comedy', 'nmj-v3-style-darkcomedy', 'nmj-v3-style-syrup', 'nmj-v3-style-dullknife', 'nmj-v3-style-drama'],
         options: [{ label: '默认质感' }, { id: 'nmj-v3-style-soda', label: '汽水日常' }, { id: 'nmj-v3-style-corridor', label: '潮雨走廊' }, { id: 'nmj-v3-style-comedy', label: '荒诞喜剧' }, { id: 'nmj-v3-style-darkcomedy', label: '黑喜剧' }, { id: 'nmj-v3-style-syrup', label: '直球甜宠' }, { id: 'nmj-v3-style-dullknife', label: '钝刀虐心' }, { id: 'nmj-v3-style-drama', label: '冷峻正剧' }],

@@ -49,6 +49,8 @@ import {
 import { incrementDigestRound, runCognitiveDigestion } from '../../../utils/memoryPalace';
 import ExplorationNote from './ExplorationNote';
 import StoryQuickPresetPanel from './StoryQuickPresetPanel';
+import StoryBiohazardDock, { StoryBiohazardLogBar } from './StoryBiohazardDock';
+import './StoryBiohazardDock.css';
 import { StoryAppearanceButton } from './StoryTheaterTheme';
 import StoryImageSettingsButton from './StoryImageSettings';
 import {
@@ -343,6 +345,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
         ...preset,
         document: resolveStoryPresetDocument(preset, entry.presetOverride),
     }), [entry.presetOverride, preset]);
+    const isBiohazard = effectivePreset.document.prompts.some(prompt => prompt.id === 'bio-v1-framework');
     const activeMiniTheater = useMemo(() => getActiveStoryMiniTheaterPrompt(effectivePreset.document), [effectivePreset.document]);
     const affinityEnabled = useMemo(() => effectivePreset.document.prompts.some(prompt => prompt.id === 'nmj-v65-affinity-control' && prompt.enabled), [effectivePreset.document]);
     const selectedBooks = useMemo(() => dedupeTheaterWorldbooks(actors).filter(book => entry.selectedWorldbookIds.includes(book.id)), [actors, entry.selectedWorldbookIds]);
@@ -954,7 +957,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             </details>
         </header>
 
-        <main className='story-page-scroll flex-1 overflow-y-auto px-5 py-7'>
+        <main className={`story-page-scroll flex-1 overflow-y-auto px-5 py-7 ${isBiohazard ? 'story-bio-reading-space' : ''}`}>
             <div className='max-w-2xl mx-auto'>
                 {messages.length === 0 ? <section className='py-10 border-y border-slate-200'>
                     <div className='text-[9px] tracking-[.25em] uppercase font-bold text-violet-500'>Opening note</div>
@@ -997,6 +1000,8 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             </div>
         </main>
 
+        {isBiohazard && <StoryBiohazardDock document={effectivePreset.document} messages={messages} />}
+
         <div className='story-quick-preset pointer-events-none absolute inset-x-0 z-20 px-4'>
             <div className='max-w-2xl mx-auto flex justify-end pr-2'>
                 <button onClick={() => setShowQuickPreset(true)} className='pointer-events-auto w-11 h-11 rounded-xl bg-violet-600 text-white shadow-lg grid place-items-center active:scale-95 transition-transform' title='本剧情快速预设' aria-label='本剧情快速预设'><SlidersHorizontal size={19} weight='bold' /></button>
@@ -1005,6 +1010,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
 
         <footer className='story-safe-footer shrink-0 px-4 pt-3 bg-stone-100/95 backdrop-blur border-t border-slate-200'>
             <div className='max-w-2xl mx-auto'>
+                {isBiohazard && <StoryBiohazardLogBar messages={messages} />}
                 {memoryStatus && <div className='mb-2 flex items-center gap-2 text-[10px] text-violet-600'><SpinnerGap size={13} className='animate-spin' />{memoryStatus}</div>}
                 {!sending && !memoryStatus && !input.trim() && pendingRetryInput && <div className='mb-2 text-[10px] text-violet-600'>上次续写可能中断了，点击推进即可继续</div>}
                 {!sending && !memoryStatus && canWriteOpening && <div className='mb-2 text-[10px] text-violet-600'>准备好了，点击推进让故事写下第一幕</div>}

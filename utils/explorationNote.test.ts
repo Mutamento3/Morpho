@@ -12,7 +12,7 @@ describe('Morpho native expedition preset', () => {
     expect(all.filter(p => p.id === BUILTIN_EXPEDITION_PRESET.id)).toHaveLength(1);
     expect(all[0].id).toBe('builtin-night-screening');
     expect(all[0].name).toContain('夜班放映室');
-    expect(all).toHaveLength(2);
+    expect(all.map(p => p.id)).toEqual(['builtin-night-screening', 'builtin-morpho-expedition', 'builtin-morpho-biohazard']);
     const doc = resolveStoryPresetDocument(BUILTIN_EXPEDITION_PRESET, { ...BUILTIN_EXPEDITION_PRESET.document, prompts: [] });
     const note = doc.prompts.find(p => p.id === 'exp-v1-explore-note')!;
     expect(note.content).toContain('<explore_note>');

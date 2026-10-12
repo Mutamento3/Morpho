@@ -11,6 +11,7 @@ import type {
     UserProfile,
 } from '../types';
 import expeditionPreset from '../assets/presets/morpho-expedition-v1.2.json';
+import biohazardPreset from '../assets/presets/morpho-biohazard-v1.0.json';
 import { parseExplorationNote, type ExplorationNote } from './explorationNote';
 import nightScreeningV627 from '../assets/presets/night-screening-v6.14.sully.json';
 import {
@@ -482,10 +483,17 @@ export const BUILTIN_EXPEDITION_PRESET: StoryTheaterPreset = {
     builtIn: true, createdAt: 0, updatedAt: 0,
 };
 
+export const BUILTIN_BIOHAZARD_PRESET: StoryTheaterPreset = {
+    id: 'builtin-morpho-biohazard', name: 'Morpho｜生化危机·余烬档案 V1.0',
+    format: 'sullyos-story-preset', document: normalizeDocument(biohazardPreset, 'Morpho｜生化危机·余烬档案 V1.0'),
+    builtIn: true, createdAt: 0, updatedAt: 0,
+};
+
 export const withBuiltInStoryPresets = (presets: StoryTheaterPreset[]): StoryTheaterPreset[] => [
     BUILTIN_NIGHT_SCREENING_PRESET,
     BUILTIN_EXPEDITION_PRESET,
-    ...presets.filter(preset => !preset.id.startsWith('builtin-night-screening') && preset.id !== BUILTIN_EXPEDITION_PRESET.id),
+    BUILTIN_BIOHAZARD_PRESET,
+    ...presets.filter(preset => !preset.id.startsWith('builtin-night-screening') && preset.id !== BUILTIN_EXPEDITION_PRESET.id && preset.id !== BUILTIN_BIOHAZARD_PRESET.id),
 ];
 
 /**
@@ -1143,7 +1151,7 @@ const formatTaggedStoryFragment = (fragment: string): string => {
 export const parseStoryDisplayBlocks = (content: string): StoryDisplayBlock[] => {
     const source = String(content || '');
     const blocks: StoryDisplayBlock[] = [];
-    const topLevel = /<(explore_note|scene_header|story_text|backstage|mind_weather|worldline|world_line|shot_debts|mini_theater|reply_choices|affinity_panel)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi;
+    const topLevel = /<(bio_state|explore_note|scene_header|story_text|backstage|mind_weather|worldline|world_line|shot_debts|mini_theater|reply_choices|affinity_panel)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi;
     let cursor = 0;
     let match: RegExpExecArray | null;
     const push = (kind: StoryDisplayBlockKind, text: string, title?: string) => {
@@ -1164,6 +1172,7 @@ export const parseStoryDisplayBlocks = (content: string): StoryDisplayBlock[] =>
     };
     while ((match = topLevel.exec(source)) !== null) {
         if (match.index > cursor) push('story', source.slice(cursor, match.index));
+        if (match[1].toLowerCase() === 'bio_state') { cursor = match.index + match[0].length; continue; }
         const meta = DISPLAY_BLOCK_META[match[1].toLowerCase()] || { kind: 'other' as const };
         if (meta.kind === 'exploration') {
             const exploration = parseExplorationNote(match[2]);
@@ -1177,21 +1186,22 @@ export const parseStoryDisplayBlocks = (content: string): StoryDisplayBlock[] =>
     }
     if (cursor < source.length) {
         const tail = source.slice(cursor);
-        const unclosedNote = /<explore_note\b[^>]*>([\s\S]*)$/i.exec(tail);
+        const visibleTail = tail.replace(/<bio_state\b[^>]*>[\s\S]*$/i, '');
+        const unclosedNote = /<explore_note\b[^>]*>([\s\S]*)$/i.exec(visibleTail);
         if (unclosedNote) {
-            if (unclosedNote.index > 0) push('story', tail.slice(0, unclosedNote.index));
+            if (unclosedNote.index > 0) push('story', visibleTail.slice(0, unclosedNote.index));
             blocks.push({ kind: 'exploration', title: '探险笔记', text: '这轮笔记尚未完整生成；原始记录已保留。' });
             return blocks;
         }
-        const unclosedTheater = /<mini_theater\b[^>]*>([\s\S]*)$/i.exec(tail);
+        const unclosedTheater = /<mini_theater\b[^>]*>([\s\S]*)$/i.exec(visibleTail);
         if (unclosedTheater) {
-            if (unclosedTheater.index > 0) push('story', tail.slice(0, unclosedTheater.index));
+            if (unclosedTheater.index > 0) push('story', visibleTail.slice(0, unclosedTheater.index));
             pushTheater(unclosedTheater[1], DISPLAY_BLOCK_META.mini_theater.title);
         } else {
-            push('story', tail);
+            push('story', visibleTail);
         }
     }
-    if (blocks.length === 0) push('story', source);
+    if (blocks.length === 0 && !/<bio_state\b/i.test(source)) push('story', source);
     return blocks;
 };
 
