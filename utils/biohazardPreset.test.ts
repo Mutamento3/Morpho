@@ -18,6 +18,9 @@ describe('Morpho biohazard preset integration', () => {
         const hud = preset.document.prompts.find(prompt => prompt.id === 'bio-v1-hud')?.content || '';
         expect(hud).toContain('"tasks"');
         expect(hud).toContain('"log"');
+        expect(hud).toContain('"objective"');
+        expect(hud).toContain('"status"');
+        expect(hud).toContain('每轮都更新状态卡');
         expect(hud).toContain('tasks 与 log 不混用');
         expect(hud).toContain('固定示意');
         const example = hud.match(/<bio_state>\{[\s\S]*?\}<\/bio_state>/)?.[0];

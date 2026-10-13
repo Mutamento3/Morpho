@@ -32,6 +32,8 @@ export interface BiohazardHudState {
     inventory: BiohazardInventoryItem[];
     tasks: string[];
     log: string[];
+    objective?: string;
+    status?: { vitality: string; pressure: string; note: string; indicator: number | null };
 }
 
 const clean = (value: unknown, limit = 90): string => typeof value === 'string' ? value.replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, limit) : '';
@@ -74,6 +76,17 @@ const parseInventory = (value: unknown): BiohazardInventoryItem[] => {
     return items;
 };
 
+const parseStatus = (value: unknown): BiohazardHudState['status'] => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const source = value as Record<string, unknown>;
+    const vitality = clean(source.vitality, 55);
+    const pressure = clean(source.pressure, 55);
+    const note = clean(source.note, 100);
+    const indicator = typeof source.indicator === 'number' && Number.isFinite(source.indicator)
+        ? Math.max(0, Math.min(100, Math.round(source.indicator))) : null;
+    return vitality || pressure || note || indicator !== null ? { vitality, pressure, note, indicator } : undefined;
+};
+
 export function parseBiohazardHudState(content: string): BiohazardHudState | null {
     const matches = [...String(content || '').matchAll(/<bio_state\b[^>]*>([\s\S]*?)<\/bio_state\s*>/gi)];
     const raw = matches[matches.length - 1]?.[1];
@@ -81,14 +94,18 @@ export function parseBiohazardHudState(content: string): BiohazardHudState | nul
     try {
         const source = JSON.parse(raw) as Record<string, unknown>;
         if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
+        const objective = clean(source.objective);
+        const status = parseStatus(source.status);
         const result = {
             location: clean(source.location),
             routes: lines(source.routes),
             inventory: parseInventory(source.inventory),
             tasks: lines(source.tasks),
             log: lines(source.log),
+            ...(objective ? { objective } : {}),
+            ...(status ? { status } : {}),
         };
-        return result.location || result.routes.length || result.inventory.length || result.tasks.length || result.log.length ? result : null;
+        return result.location || result.routes.length || result.inventory.length || result.tasks.length || result.log.length || result.objective || result.status ? result : null;
     } catch {
         return null;
     }

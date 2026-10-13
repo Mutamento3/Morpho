@@ -30,6 +30,13 @@ describe('biohazard story tools', () => {
         expect(state?.log).toEqual(['已确认：广播记录被覆盖']);
     });
 
+    it('reads per-round status without inventing an indicator', () => {
+        const message = `<bio_state>${JSON.stringify({ location: '酒店套房', objective: '守住出口', status: { vitality: '有些脱力', pressure: '可以行动', note: '警笛声靠近', indicator: null }, routes: [], inventory: [], tasks: [], log: [] })}</bio_state>`;
+        expect(parseBiohazardHudState(message)?.status).toEqual({ vitality: '有些脱力', pressure: '可以行动', note: '警笛声靠近', indicator: null });
+        expect(parseBiohazardHudState(message)?.objective).toBe('守住出口');
+        expect(parseBiohazardHudState('<bio_state>{"status":{"indicator":145}}</bio_state>')?.status?.indicator).toBe(100);
+    });
+
     it('handles incomplete state and bounds untrusted model output', () => {
         expect(parseBiohazardHudState('<bio_state>{bad}</bio_state>')).toBeNull();
         expect(parseBiohazardHudState('<bio_state>{"location":""}</bio_state>')).toBeNull();
