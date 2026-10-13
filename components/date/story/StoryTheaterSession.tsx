@@ -49,7 +49,7 @@ import {
 import { incrementDigestRound, runCognitiveDigestion } from '../../../utils/memoryPalace';
 import ExplorationNote from './ExplorationNote';
 import StoryQuickPresetPanel from './StoryQuickPresetPanel';
-import StoryBiohazardDock, { StoryBiohazardLogBar } from './StoryBiohazardDock';
+import StoryBiohazardDock from './StoryBiohazardDock';
 import StoryBiohazardRoundStatus from './StoryBiohazardRoundStatus';
 import './StoryBiohazardDock.css';
 import { StoryAppearanceButton } from './StoryTheaterTheme';
@@ -194,8 +194,8 @@ const StorySceneRelationships: React.FC<{ inputs: StoryAffinityInput[] }> = ({ i
     })}</div>
 </div>;
 
-const StoryOutput: React.FC<{ content: string; onChoose?: (text: string) => void; affinityInputs: StoryAffinityInput[] }> = ({ content, onChoose, affinityInputs }) => {
-    const blocks = parseStoryDisplayBlocks(content);
+const StoryOutput: React.FC<{ content: string; onChoose?: (text: string) => void; affinityInputs: StoryAffinityInput[]; hideWorldline?: boolean }> = ({ content, onChoose, affinityInputs, hideWorldline }) => {
+    const blocks = parseStoryDisplayBlocks(content).filter(block => !hideWorldline || block.kind !== 'worldline');
     const relationshipSceneIndex = blocks.findIndex(block => block.kind === 'scene');
     const hasScene = relationshipSceneIndex >= 0;
     const relationship = affinityInputs.length > 0 ? <StorySceneRelationships inputs={affinityInputs} /> : null;
@@ -989,13 +989,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                                 <div className='pb-5 pl-7'>
                                     {message.role === 'user'
                                         ? <p className='text-sm leading-7 text-slate-600 whitespace-pre-wrap'>{message.content}</p>
-                                        : <><StoryOutput content={message.content} affinityInputs={affinityInputsFromMessage(message, actors)} />{isBiohazard && <StoryBiohazardRoundStatus content={message.content} theme={biohazardTheme} />}<StoryRoundVisuals message={message} busyKey={regeneratingFrameKey} onRegenerate={frameIndex => void regenerateStoryFrame(message, frameIndex)} onGenerate={() => void generateStoryImagesForMessage(message)} /></>}
+                                        : <><StoryOutput hideWorldline={isBiohazard} content={message.content} affinityInputs={affinityInputsFromMessage(message, actors)} />{isBiohazard && <StoryBiohazardRoundStatus content={message.content} theme={biohazardTheme} timestamp={message.timestamp} />}<StoryRoundVisuals message={message} busyKey={regeneratingFrameKey} onRegenerate={frameIndex => void regenerateStoryFrame(message, frameIndex)} onGenerate={() => void generateStoryImagesForMessage(message)} /></>}
                                 </div>
                             </details>;
                         }
                         if (message.role === 'user') return <section key={message.id} {...pressHandlersFor(message)} className='pl-4 border-l-2 border-violet-300'><div className='text-[9px] tracking-[.16em] font-bold text-violet-500'>你写下</div><p className='mt-2 text-sm leading-7 text-slate-600 whitespace-pre-wrap'>{message.content}</p></section>;
                         const isLatest = message.id === messages[messages.length - 1]?.id;
-                        return <article key={message.id} {...pressHandlersFor(message)}><StoryOutput content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} />{isBiohazard && <StoryBiohazardRoundStatus content={message.content} theme={biohazardTheme} />}<StoryRoundVisuals message={message} busyKey={regeneratingFrameKey} onRegenerate={frameIndex => void regenerateStoryFrame(message, frameIndex)} onGenerate={() => void generateStoryImagesForMessage(message)} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={sending} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
+                        return <article key={message.id} {...pressHandlersFor(message)}><StoryOutput hideWorldline={isBiohazard} content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} />{isBiohazard && <StoryBiohazardRoundStatus content={message.content} theme={biohazardTheme} timestamp={message.timestamp} />}<StoryRoundVisuals message={message} busyKey={regeneratingFrameKey} onRegenerate={frameIndex => void regenerateStoryFrame(message, frameIndex)} onGenerate={() => void generateStoryImagesForMessage(message)} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={sending} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
                     })}
                 </div>
                 {archivedCount > 0 && <div className='mt-10 flex items-center justify-center gap-2 text-[9px] text-slate-400'><Archive size={13} />{archivedCount} 条旧内容已归档，仍会通过所选记忆方式参与续写</div>}
@@ -1013,7 +1013,6 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
 
         <footer className='story-safe-footer shrink-0 px-4 pt-3 bg-stone-100/95 backdrop-blur border-t border-slate-200'>
             <div className='max-w-2xl mx-auto'>
-                {isBiohazard && <StoryBiohazardLogBar messages={messages} />}
                 {memoryStatus && <div className='mb-2 flex items-center gap-2 text-[10px] text-violet-600'><SpinnerGap size={13} className='animate-spin' />{memoryStatus}</div>}
                 {!sending && !memoryStatus && !input.trim() && pendingRetryInput && <div className='mb-2 text-[10px] text-violet-600'>上次续写可能中断了，点击推进即可继续</div>}
                 {!sending && !memoryStatus && canWriteOpening && <div className='mb-2 text-[10px] text-violet-600'>准备好了，点击推进让故事写下第一幕</div>}

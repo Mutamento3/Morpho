@@ -33,6 +33,10 @@ export interface BiohazardHudState {
     tasks: string[];
     log: string[];
     objective?: string;
+    storyTime?: string;
+    alert?: string;
+    tags?: string[];
+    communications?: { sender: string; time: string; text: string }[];
     status?: { vitality: string; pressure: string; note: string; indicator: number | null };
 }
 
@@ -96,6 +100,11 @@ export function parseBiohazardHudState(content: string): BiohazardHudState | nul
         if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
         const objective = clean(source.objective);
         const status = parseStatus(source.status);
+        const communications = Array.isArray(source.communications) ? source.communications.slice(0, 5).flatMap(entry => {
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+            const text = clean(entry.text, 240);
+            return text ? [{ sender: clean(entry.sender, 40) || '来源未记录', time: clean(entry.time, 40), text }] : [];
+        }) : [];
         const result = {
             location: clean(source.location),
             routes: lines(source.routes),
@@ -104,8 +113,12 @@ export function parseBiohazardHudState(content: string): BiohazardHudState | nul
             log: lines(source.log),
             ...(objective ? { objective } : {}),
             ...(status ? { status } : {}),
+            ...(clean(source.storyTime, 50) ? { storyTime: clean(source.storyTime, 50) } : {}),
+            ...(clean(source.alert, 30) ? { alert: clean(source.alert, 30) } : {}),
+            ...(lines(source.tags).length ? { tags: lines(source.tags).slice(0, 3) } : {}),
+            ...(communications.length ? { communications } : {}),
         };
-        return result.location || result.routes.length || result.inventory.length || result.tasks.length || result.log.length || result.objective || result.status ? result : null;
+        return result.location || result.routes.length || result.inventory.length || result.tasks.length || result.log.length || result.objective || result.status || result.storyTime || result.communications ? result : null;
     } catch {
         return null;
     }

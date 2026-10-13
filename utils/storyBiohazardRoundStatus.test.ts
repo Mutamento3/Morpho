@@ -9,8 +9,21 @@ describe('biohazard per-round status', () => {
         const markup = renderToStaticMarkup(React.createElement(StoryBiohazardRoundStatus, { content, theme }));
         expect(markup).toContain(`story-bio-round-${theme}`);
         expect(markup).toContain('找到出口');
+        expect(markup).toContain('生存记录');
+        expect(markup.match(/role="tab"/g)).toHaveLength(3);
         expect(markup).toContain('门禁失效');
         expect(markup).not.toContain('role="meter"');
+    });
+
+    it('keeps this rounds time, logs and communications inside its own record', () => {
+        const content = `<bio_state>${JSON.stringify({ location: '警局', storyTime: '第一日 09:32', log: ['已经找到备用钥匙'], communications: [{ sender: '无线电', time: '09:30', text: '东门暂时关闭' }] })}</bio_state>`;
+        const markup = renderToStaticMarkup(React.createElement(StoryBiohazardRoundStatus, { content, theme: 'human' }));
+        expect(markup).toContain('第一日 09:32');
+        expect(markup).toContain('已经找到备用钥匙');
+        expect(markup).toContain('无线电');
+        expect(markup).toContain('东门暂时关闭');
+        expect(markup.match(/hidden=""/g)).toHaveLength(2);
+        expect(markup).not.toContain('世界线仍在镜头外前进');
     });
 
     it('shows known facts from older worldline-only replies', () => {

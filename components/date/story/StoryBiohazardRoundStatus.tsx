@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useId, useState } from 'react';
 import { parseBiohazardHudState } from '../../../utils/biohazardHud';
 import { parseStoryDisplayBlocks } from '../../../utils/storyTheater';
 
@@ -25,7 +25,9 @@ const firstField = (fields: Record<string, string>, names: string[]): string => 
     return key ? fields[key] : '';
 };
 
-export const StoryBiohazardRoundStatus: React.FC<{ content: string; theme: Theme }> = ({ content, theme }) => {
+export const StoryBiohazardRoundStatus: React.FC<{ content: string; theme: Theme; timestamp?: number }> = ({ content, theme, timestamp }) => {
+    const [tab, setTab] = useState<'status' | 'log' | 'communications'>('status');
+    const panelId = useId();
     const state = parseBiohazardHudState(content);
     const fields = worldlineFields(content);
     const labels = LABELS[theme];
@@ -35,13 +37,38 @@ export const StoryBiohazardRoundStatus: React.FC<{ content: string; theme: Theme
     const pressure = state?.status?.pressure || firstField(fields, ['压力', '警戒', '风险']) || '未记录';
     const note = state?.status?.note || '';
     const indicator = state?.status?.indicator;
+    const storyTime = state?.storyTime || firstField(fields, ['时间', '日期']);
+    const recordedAt = timestamp && Number.isFinite(timestamp) ? new Date(timestamp) : null;
+    const log = state?.log.length ? state.log : Object.entries(fields).map(([label, value]) => `${label}：${value}`);
+    const communications = state?.communications || [];
+    const tabs = [{ id: 'status', label: '状态', icon: '+' }, { id: 'log', label: '日志', icon: '≡' }, { id: 'communications', label: '通讯', icon: '◎' }] as const;
 
-    return <section className={`story-bio-round story-bio-round-${theme}`} aria-label='本轮剧情状态'>
-        <div className='story-bio-round-top'><span>{location}</span><span>本轮状态</span></div>
+    return <section className={`story-bio-round story-bio-round-${theme}`} aria-label='本轮生存记录'>
+        <header className='story-bio-record-header'><small>SURVIVAL CHANNEL / {theme === 'human' ? '01' : theme === 'variant' ? '02' : '03'}</small><h2>生存记录</h2><p>{storyTime ? `剧情时间 · ${storyTime}` : recordedAt && !Number.isNaN(recordedAt.getTime()) ? <>记录于 <time dateTime={recordedAt.toISOString()}>{recordedAt.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}</time></> : '本轮时间未记录'}</p></header>
+        <div className='story-bio-round-top'><span>{location}</span><span>{state?.alert || '态势未记录'}</span></div>
         <div className='story-bio-round-objective'><small>{labels.eyebrow}</small><strong>{objective}</strong>{note && <p>{note}</p>}</div>
+        {!!state?.tags?.length && <div className='story-bio-record-tags'>{state.tags.map((tag, index) => <span key={index}>{tag}</span>)}</div>}
+        <div className='story-bio-record-tabs' role='tablist' aria-label='生存记录栏目' onPointerDown={event => event.stopPropagation()} onContextMenu={event => event.stopPropagation()}>
+            {tabs.map((item, index) => <button key={item.id} type='button' role='tab' id={`${panelId}-${item.id}-tab`} aria-controls={`${panelId}-${item.id}`} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => setTab(item.id)} onKeyDown={event => {
+                const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1;
+                if (next < 0) return;
+                event.preventDefault(); setTab(tabs[next].id);
+                (event.currentTarget.parentElement?.children[next] as HTMLElement)?.focus();
+            }}><span aria-hidden='true'>{item.icon}</span>{item.label}</button>)}
+        </div>
+        <div role='tabpanel' id={`${panelId}-status`} aria-labelledby={`${panelId}-status-tab`} hidden={tab !== 'status'}>
         <div className='story-bio-round-heading'><strong>{labels.heading}</strong><span>STATUS / {theme === 'human' ? '01' : theme === 'variant' ? '02' : '03'}</span></div>
         <div className='story-bio-round-stats'><div><small>{labels.vitality}</small><span>{vitality}</span></div><div><small>{labels.pressure}</small><span>{pressure}</span></div></div>
         {indicator !== undefined && indicator !== null && <div className='story-bio-round-indicator'><small>状态读数 / VISUAL INDICATOR</small><div role='meter' aria-label='状态读数' aria-valuemin={0} aria-valuemax={100} aria-valuenow={indicator}><span style={{ width: `${indicator}%` }} /></div><p>读数仅在剧情明确给出时显示。</p></div>}
+        </div>
+        <div role='tabpanel' id={`${panelId}-log`} aria-labelledby={`${panelId}-log-tab`} hidden={tab !== 'log'}>
+            <div className='story-bio-round-heading'><strong>本轮日志</strong><span>LOG / 02</span></div>
+            <div className='story-bio-record-entries'>{log.length ? log.map((entry, index) => <p key={index}>{entry}</p>) : <p>本轮暂无日志记录。</p>}</div>
+        </div>
+        <div role='tabpanel' id={`${panelId}-communications`} aria-labelledby={`${panelId}-communications-tab`} hidden={tab !== 'communications'}>
+            <div className='story-bio-round-heading'><strong>通讯记录</strong><span>COMMS / 03</span></div>
+            <div className='story-bio-record-entries'>{communications.length ? communications.map((entry, index) => <article key={index}><div><strong>{entry.sender}</strong>{entry.time && <span>{entry.time}</span>}</div><p>{entry.text}</p></article>) : <p>本轮暂无通讯记录。</p>}</div>
+        </div>
     </section>;
 };
 

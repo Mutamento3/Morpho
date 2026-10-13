@@ -77,19 +77,4 @@ const StoryBiohazardDock: React.FC<Props> = ({ document, messages }) => {
     </>;
 };
 
-export const StoryBiohazardLogBar: React.FC<{ messages: Message[] }> = ({ messages }) => {
-    const log = useMemo(() => {
-        for (let index = messages.length - 1; index >= 0; index--) {
-            if (messages[index].role !== 'assistant') continue;
-            const state = parseBiohazardHudState(messages[index].content);
-            if (state) return state.log;
-        }
-        return [];
-    }, [messages]);
-    return <details className='story-bio-log-bar'>
-        <summary>日志 <span>{log.length ? `${log.length} 条记录` : '暂无记录'}</span></summary>
-        <div>{log.length ? log.map((entry, index) => <p key={`${index}-${entry}`}>{entry}</p>) : <p>第一轮剧情后，这里会留下已发现的线索。</p>}</div>
-    </details>;
-};
-
 export default StoryBiohazardDock;
