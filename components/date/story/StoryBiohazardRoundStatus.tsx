@@ -1,5 +1,5 @@
 import React, { useId, useState } from 'react';
-import { parseBiohazardHudState } from '../../../utils/biohazardHud';
+import { parseBiohazardHudState, resolveBiohazardMembers, type BiohazardRosterMember } from '../../../utils/biohazardHud';
 import { parseStoryDisplayBlocks } from '../../../utils/storyTheater';
 
 type Theme = 'human' | 'variant' | 'umbrella';
@@ -25,7 +25,7 @@ const firstField = (fields: Record<string, string>, names: string[]): string => 
     return key ? fields[key] : '';
 };
 
-export const StoryBiohazardRoundStatus: React.FC<{ content: string; theme: Theme; timestamp?: number }> = ({ content, theme, timestamp }) => {
+export const StoryBiohazardRoundStatus: React.FC<{ content: string; theme: Theme; timestamp?: number; roster?: BiohazardRosterMember[] }> = ({ content, theme, timestamp, roster }) => {
     const [tab, setTab] = useState<'status' | 'log' | 'communications'>('status');
     const panelId = useId();
     const state = parseBiohazardHudState(content);
@@ -36,7 +36,7 @@ export const StoryBiohazardRoundStatus: React.FC<{ content: string; theme: Theme
     const vitality = state?.status?.vitality || firstField(fields, ['身体状态', '身体', '体力', '伤势']) || '未记录';
     const pressure = state?.status?.pressure || firstField(fields, ['压力', '警戒', '风险']) || '未记录';
     const note = state?.status?.note || '';
-    const indicator = state?.status?.indicator;
+    const members = resolveBiohazardMembers(state, roster || state?.members || [{ id: 'user', name: '你' }]);
     const storyTime = state?.storyTime || firstField(fields, ['时间', '日期']);
     const recordedAt = timestamp && Number.isFinite(timestamp) ? new Date(timestamp) : null;
     const log = state?.log.length ? state.log : Object.entries(fields).map(([label, value]) => `${label}：${value}`);
@@ -58,8 +58,19 @@ export const StoryBiohazardRoundStatus: React.FC<{ content: string; theme: Theme
         </div>
         <div role='tabpanel' id={`${panelId}-status`} aria-labelledby={`${panelId}-status-tab`} hidden={tab !== 'status'}>
         <div className='story-bio-round-heading'><strong>{labels.heading}</strong><span>STATUS / {theme === 'human' ? '01' : theme === 'variant' ? '02' : '03'}</span></div>
-        <div className='story-bio-round-stats'><div><small>{labels.vitality}</small><span>{vitality}</span></div><div><small>{labels.pressure}</small><span>{pressure}</span></div></div>
-        {indicator !== undefined && indicator !== null && <div className='story-bio-round-indicator'><small>状态读数 / VISUAL INDICATOR</small><div role='meter' aria-label='状态读数' aria-valuemin={0} aria-valuemax={100} aria-valuenow={indicator}><span style={{ width: `${indicator}%` }} /></div><p>读数仅在剧情明确给出时显示。</p></div>}
+        <div className='story-bio-party'>
+            {members.map(person => <section className='story-bio-member' key={person.id} aria-label={person.name + '的状态'}>
+                <h3>{person.name}<small>{person.id === 'user' ? 'USER' : 'CHAR'}</small></h3>
+                <div className='story-bio-round-stats'>
+                    {([{ key: 'vitality', label: '体力', value: person.vitality }, { key: 'pressure', label: '压力', value: person.pressure }] as const).map(item => <div key={item.key} className={'story-bio-member-metric story-bio-member-' + item.key}>
+                        <small>{item.label}</small><strong>{item.value.value === null ? '未记录' : <>{item.value.value}<small> / 100</small></>}</strong>
+                        {item.value.value !== null && <div className='story-bio-member-meter' role='meter' aria-label={person.name + '的' + item.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={item.value.value}><i style={{ width: item.value.value + '%' }} /></div>}
+                        {item.value.text && <p>{item.value.text}</p>}
+                    </div>)}
+                </div>
+            </section>)}
+        </div>
+        {!state?.members?.length && (vitality !== '未记录' || pressure !== '未记录') && <p className='story-bio-legacy-note'>旧版队伍记录：{vitality}；{pressure}。本轮未保存逐人数值。</p>}
         </div>
         <div role='tabpanel' id={`${panelId}-log`} aria-labelledby={`${panelId}-log-tab`} hidden={tab !== 'log'}>
             <div className='story-bio-round-heading'><strong>本轮日志</strong><span>LOG / 02</span></div>

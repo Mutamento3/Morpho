@@ -19,6 +19,12 @@ export const BIO_ITEM_CATEGORIES = {
 
 export type BioItemCategory = keyof typeof BIO_ITEM_CATEGORIES;
 
+export interface BiohazardRosterMember { id: string; name: string }
+export interface BiohazardMemberStatus extends BiohazardRosterMember {
+    vitality: { value: number | null; text: string };
+    pressure: { value: number | null; text: string };
+}
+
 export interface BiohazardInventoryItem {
     category: BioItemCategory | null;
     name: string;
@@ -33,6 +39,7 @@ export interface BiohazardHudState {
     tasks: string[];
     log: string[];
     objective?: string;
+    members?: BiohazardMemberStatus[];
     storyTime?: string;
     alert?: string;
     tags?: string[];
@@ -42,6 +49,31 @@ export interface BiohazardHudState {
 
 const clean = (value: unknown, limit = 90): string => typeof value === 'string' ? value.replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, limit) : '';
 const lines = (value: unknown): string[] => Array.isArray(value) ? value.map(item => clean(item)).filter(Boolean).slice(0, 5) : [];
+const score = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) : null;
+const metric = (value: unknown): BiohazardMemberStatus['vitality'] => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return { value: null, text: '' };
+    const raw = value as Record<string, unknown>;
+    return { value: score(raw.value), text: clean(raw.text, 80) };
+};
+const parseMembers = (value: unknown): BiohazardMemberStatus[] => Array.isArray(value) ? value.slice(0, 50).flatMap(raw => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+    const id = clean(raw.id, 100), name = clean(raw.name, 50);
+    return id || name ? [{ id, name, vitality: metric(raw.vitality), pressure: metric(raw.pressure) }] : [];
+}) : [];
+
+export const biohazardRosterSnapshot = (value: unknown, fallback: BiohazardRosterMember[]): BiohazardRosterMember[] => {
+    if (!Array.isArray(value)) return fallback;
+    const roster = value.filter(item => item && typeof item.id === 'string' && typeof item.name === 'string').map(item => ({ id: item.id, name: item.name }));
+    return roster.length ? roster : fallback;
+};
+
+export const resolveBiohazardMembers = (state: BiohazardHudState | null, roster: BiohazardRosterMember[]): BiohazardMemberStatus[] => roster.map(person => {
+    const match = state?.members?.find(item => item.id === person.id)
+        || (roster.filter(item => item.name === person.name).length === 1 ? state?.members?.find(item => !item.id && item.name === person.name) : undefined);
+    return { ...person, vitality: match?.vitality || { value: null, text: '' }, pressure: match?.pressure || { value: null, text: '' } };
+});
+
+export const buildBiohazardPartyGuide = (roster: BiohazardRosterMember[]): string => `主角团状态名单（用户在前，角色随后）：${JSON.stringify(roster)}。每轮 bio_state.members 必须按这个顺序逐人输出，准确复制 id 和 name；每人分别提供 vitality 与 pressure 对象，各含 value（0—100 整数）和 text（简短原因或状态）。体力越高越充沛，压力越高越紧张；两项都是虚构剧情游戏数值。首次根据该人开局情况建立数值，此后继承上一轮，按本轮行动、休息、受伤或事件独立变化；无变化保持，不自动全员下降、不把一个人的数值复制给全队。不省略暂时离队的主角团成员，无法观察时沿用最后记录并注明。`;
 const validCategory = (value: unknown): BioItemCategory | null =>
     typeof value === 'string' && Object.prototype.hasOwnProperty.call(BIO_ITEM_CATEGORIES, value) ? value as BioItemCategory : null;
 
@@ -100,6 +132,7 @@ export function parseBiohazardHudState(content: string): BiohazardHudState | nul
         if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
         const objective = clean(source.objective);
         const status = parseStatus(source.status);
+        const members = parseMembers(source.members);
         const communications = Array.isArray(source.communications) ? source.communications.slice(0, 5).flatMap(entry => {
             if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
             const text = clean(entry.text, 240);
@@ -113,12 +146,13 @@ export function parseBiohazardHudState(content: string): BiohazardHudState | nul
             log: lines(source.log),
             ...(objective ? { objective } : {}),
             ...(status ? { status } : {}),
+            ...(members.length ? { members } : {}),
             ...(clean(source.storyTime, 50) ? { storyTime: clean(source.storyTime, 50) } : {}),
             ...(clean(source.alert, 30) ? { alert: clean(source.alert, 30) } : {}),
             ...(lines(source.tags).length ? { tags: lines(source.tags).slice(0, 3) } : {}),
             ...(communications.length ? { communications } : {}),
         };
-        return result.location || result.routes.length || result.inventory.length || result.tasks.length || result.log.length || result.objective || result.status || result.storyTime || result.communications ? result : null;
+        return result.location || result.routes.length || result.inventory.length || result.tasks.length || result.log.length || result.objective || result.status || result.storyTime || result.communications || result.members ? result : null;
     } catch {
         return null;
     }

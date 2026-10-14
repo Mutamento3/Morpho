@@ -4,6 +4,19 @@ import { describe, expect, it } from 'vitest';
 import StoryBiohazardRoundStatus from '../components/date/story/StoryBiohazardRoundStatus';
 
 describe('biohazard per-round status', () => {
+    it.each([1, 2])('shows user and %s characters vertically with two independent scores each', count => {
+        const roster = [{ id: 'user', name: '沈欢' }, { id: 'char:a', name: '苏郁' }, { id: 'char:b', name: '祁山' }].slice(0, count + 1);
+        const members = roster.map((person, i) => ({ ...person, vitality: { value: 80 - i * 10, text: '行动后的体力' }, pressure: { value: 20 + i * 15, text: '当前压力' } }));
+        const markup = renderToStaticMarkup(React.createElement(StoryBiohazardRoundStatus, { theme: 'human', roster, content: '<bio_state>' + JSON.stringify({ members: [...members].reverse() }) + '</bio_state>' }));
+        expect(markup.match(/class="story-bio-member"/g)).toHaveLength(count + 1);
+        expect(markup.match(/role="meter"/g)).toHaveLength((count + 1) * 2);
+        expect(markup.indexOf('沈欢')).toBeLessThan(markup.indexOf('苏郁'));
+        for (const member of members) {
+            expect(markup).toContain(`aria-label="${member.name}的体力" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${member.vitality.value}"`);
+            expect(markup).toContain(`aria-label="${member.name}的压力" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${member.pressure.value}"`);
+        }
+    });
+
     it.each(['human', 'variant', 'umbrella'] as const)('renders %s status after a reply', theme => {
         const content = `<story_text>门外传来脚步声。</story_text><bio_state>${JSON.stringify({ location: '地下通道', objective: '找到出口', status: { vitality: '稳定', pressure: '警戒中', note: '门禁失效', indicator: null }, routes: [], inventory: [], tasks: [], log: [] })}</bio_state>`;
         const markup = renderToStaticMarkup(React.createElement(StoryBiohazardRoundStatus, { content, theme }));

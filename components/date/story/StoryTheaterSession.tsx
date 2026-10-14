@@ -51,6 +51,7 @@ import ExplorationNote from './ExplorationNote';
 import StoryQuickPresetPanel from './StoryQuickPresetPanel';
 import StoryBiohazardDock from './StoryBiohazardDock';
 import StoryBiohazardRoundStatus from './StoryBiohazardRoundStatus';
+import { buildBiohazardPartyGuide, biohazardRosterSnapshot } from '../../../utils/biohazardHud';
 import './StoryBiohazardDock.css';
 import { StoryAppearanceButton } from './StoryTheaterTheme';
 import StoryImageSettingsButton from './StoryImageSettings';
@@ -347,6 +348,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
         document: resolveStoryPresetDocument(preset, entry.presetOverride),
     }), [entry.presetOverride, preset]);
     const isBiohazard = effectivePreset.document.prompts.some(prompt => prompt.id === 'bio-v1-framework');
+    const biohazardRoster = useMemo(() => [{ id: 'user', name: mask.name || '你' }, ...entry.characterIds.flatMap(id => { const actor = actors.find(item => item.id === id); return actor ? [{ id: 'char:' + actor.id, name: actor.name }] : []; })], [mask.name, actors, entry.characterIds]);
     const biohazardFaction = effectivePreset.document.prompts.find(prompt => prompt.enabled && prompt.id.startsWith('bio-v1-faction-'))?.id;
     const biohazardTheme = biohazardFaction === 'bio-v1-faction-umbrella' ? 'umbrella' : biohazardFaction === 'bio-v1-faction-variant' ? 'variant' : 'human';
     const activeMiniTheater = useMemo(() => getActiveStoryMiniTheaterPrompt(effectivePreset.document), [effectivePreset.document]);
@@ -829,6 +831,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             const modelInput = appendStoryAffinityInputs(text, affinityInputs);
             const payloadBeforeTurn = [
                 ...compiled.messages,
+                ...(isBiohazard ? [{ role: 'system' as const, content: buildBiohazardPartyGuide(biohazardRoster) }] : []),
                 ...(entry.writesToCharacterMemory ? [{ role: 'system' as const, content: REAL_COMPANION_MEMORY_GUARD }] : []),
                 ...(backstageAftermathReminder ? [{ role: 'system' as const, content: backstageAftermathReminder }] : []),
                 ...(miniTheaterReminder ? [{ role: 'system' as const, content: miniTheaterReminder }] : []),
@@ -855,6 +858,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 await DB.deleteMessages([rerollTarget.id, ...mirrorIds]);
             }
             const assistantMessageId = await saveCentralAndMirrors('assistant', content, {
+                ...(isBiohazard ? { theaterBiohazardRoster: biohazardRoster } : {}),
                 theaterPromptTokens: promptTokenCount,
                 theaterPromptTokensExact: promptTokenCountExact,
                 ...(affinityInputs.length > 0 ? { theaterAffinityInputs: affinityInputs } : {}),
@@ -920,7 +924,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             setSending(false);
             setRerollingId(null);
         }
-    }, [actors, addToast, affinityDrafts, affinityEnabled, apiConfig, applyActorMemoryPipeline, archiveIfNeeded, buildActorContexts, buildMaskMemoryContext, callCompletion, effectivePreset, entry, independentRecall, input, loadMessages, mask, promptIdentityName, saveCentralAndMirrors, selectedBooks, sending, showError, threadId]);
+    }, [isBiohazard, biohazardRoster, actors, addToast, affinityDrafts, affinityEnabled, apiConfig, applyActorMemoryPipeline, archiveIfNeeded, buildActorContexts, buildMaskMemoryContext, callCompletion, effectivePreset, entry, independentRecall, input, loadMessages, mask, promptIdentityName, saveCentralAndMirrors, selectedBooks, sending, showError, threadId]);
 
     const archivedCount = messages.filter(message => mirrorArchived(message, entry)).length;
     const pendingRetryInput = getPendingStoryRetryInput(messages);
@@ -989,13 +993,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                                 <div className='pb-5 pl-7'>
                                     {message.role === 'user'
                                         ? <p className='text-sm leading-7 text-slate-600 whitespace-pre-wrap'>{message.content}</p>
-                                        : <><StoryOutput hideWorldline={isBiohazard} content={message.content} affinityInputs={affinityInputsFromMessage(message, actors)} />{isBiohazard && <StoryBiohazardRoundStatus content={message.content} theme={biohazardTheme} timestamp={message.timestamp} />}<StoryRoundVisuals message={message} busyKey={regeneratingFrameKey} onRegenerate={frameIndex => void regenerateStoryFrame(message, frameIndex)} onGenerate={() => void generateStoryImagesForMessage(message)} /></>}
+                                        : <><StoryOutput hideWorldline={isBiohazard} content={message.content} affinityInputs={affinityInputsFromMessage(message, actors)} />{isBiohazard && <StoryBiohazardRoundStatus content={message.content} theme={biohazardTheme} timestamp={message.timestamp} roster={biohazardRosterSnapshot(message.metadata?.theaterBiohazardRoster, biohazardRoster)} />}<StoryRoundVisuals message={message} busyKey={regeneratingFrameKey} onRegenerate={frameIndex => void regenerateStoryFrame(message, frameIndex)} onGenerate={() => void generateStoryImagesForMessage(message)} /></>}
                                 </div>
                             </details>;
                         }
                         if (message.role === 'user') return <section key={message.id} {...pressHandlersFor(message)} className='pl-4 border-l-2 border-violet-300'><div className='text-[9px] tracking-[.16em] font-bold text-violet-500'>你写下</div><p className='mt-2 text-sm leading-7 text-slate-600 whitespace-pre-wrap'>{message.content}</p></section>;
                         const isLatest = message.id === messages[messages.length - 1]?.id;
-                        return <article key={message.id} {...pressHandlersFor(message)}><StoryOutput hideWorldline={isBiohazard} content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} />{isBiohazard && <StoryBiohazardRoundStatus content={message.content} theme={biohazardTheme} timestamp={message.timestamp} />}<StoryRoundVisuals message={message} busyKey={regeneratingFrameKey} onRegenerate={frameIndex => void regenerateStoryFrame(message, frameIndex)} onGenerate={() => void generateStoryImagesForMessage(message)} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={sending} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
+                        return <article key={message.id} {...pressHandlersFor(message)}><StoryOutput hideWorldline={isBiohazard} content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} />{isBiohazard && <StoryBiohazardRoundStatus content={message.content} theme={biohazardTheme} timestamp={message.timestamp} roster={biohazardRosterSnapshot(message.metadata?.theaterBiohazardRoster, biohazardRoster)} />}<StoryRoundVisuals message={message} busyKey={regeneratingFrameKey} onRegenerate={frameIndex => void regenerateStoryFrame(message, frameIndex)} onGenerate={() => void generateStoryImagesForMessage(message)} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={sending} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
                     })}
                 </div>
                 {archivedCount > 0 && <div className='mt-10 flex items-center justify-center gap-2 text-[9px] text-slate-400'><Archive size={13} />{archivedCount} 条旧内容已归档，仍会通过所选记忆方式参与续写</div>}

@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { parseBiohazardHudState } from './biohazardHud';
+import { parseBiohazardHudState, resolveBiohazardMembers, biohazardRosterSnapshot, buildBiohazardPartyGuide } from './biohazardHud';
 import { parseStoryDisplayBlocks } from './storyTheater';
 
 describe('biohazard story tools', () => {
+    it('matches scores by identity, preserves zero, and keeps historical rosters', () => {
+        const roster = [{ id: 'user', name: '同名' }, { id: 'char:a', name: '同名' }];
+        const state = parseBiohazardHudState('<bio_state>{"members":[{"id":"char:a","name":"同名","vitality":{"value":140},"pressure":{"value":0}},{"id":"user","name":"同名","vitality":{"value":65},"pressure":{"value":40}}]}</bio_state>');
+        const people = resolveBiohazardMembers(state, roster);
+        expect(people.map(p => [p.vitality.value, p.pressure.value])).toEqual([[65, 40], [100, 0]]);
+        const missing = resolveBiohazardMembers(state, [{ id: 'char:new', name: '同名' }]);
+        expect(missing[0].vitality.value).toBeNull();
+        expect(biohazardRosterSnapshot(roster, [...roster, { id: 'char:new', name: '新人' }])).toEqual(roster);
+        expect(buildBiohazardPartyGuide(roster)).toContain(JSON.stringify(roster));
+    });
     it('keeps state out of prose and accepts older string inventories', () => {
         const message = '<story_text>广播突然停了。</story_text><worldline>地点：北侧街区</worldline><bio_state>{"location":"北侧街区","routes":["警局入口待确认"],"inventory":["手电电量半格"],"log":["已确认：广播曾重复三次"]}</bio_state>';
         expect(parseBiohazardHudState(message)).toEqual({ location: '北侧街区', routes: ['警局入口待确认'], inventory: [{ category: null, name: '手电电量半格', quantity: 1, detail: '' }], tasks: [], log: ['已确认：广播曾重复三次'] });
