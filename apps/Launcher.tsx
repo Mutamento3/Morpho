@@ -119,7 +119,19 @@ const CharacterWidget = React.memo(({
     contentColor: string,
     paper?: boolean,
 }) => {
-    const { theme } = useOS();
+    const { theme, isDataLoaded } = useOS();
+    const [loadingSlow, setLoadingSlow] = useState(false);
+    useEffect(() => {
+        setLoadingSlow(false);
+        if (char) return;
+        const timer = setTimeout(() => setLoadingSlow(true), 15000);
+        return () => clearTimeout(timer);
+    }, [char, isDataLoaded]);
+    if (!char) return <div className='mb-3 rounded-3xl p-4 bg-white/20' style={{ color: contentColor }} role='status'>
+        <strong>{isDataLoaded ? '暂未找到角色' : loadingSlow ? '本地资料加载较慢' : '正在读取本地资料…'}</strong>
+        <p className='text-xs mt-2'>{isDataLoaded ? '可进入神经链接查看角色。' : '正在读取角色和聊天记录，这不是网络信号提示。'}</p>
+        {(loadingSlow || isDataLoaded) && <button type='button' className='mt-3 text-sm underline' onClick={() => isDataLoaded ? onClick() : window.location.reload()}>{isDataLoaded ? '查看角色' : '重新加载页面'}</button>}
+    </div>;
     const acnh = theme.skin === 'animalcrossing'; // 动森彩蛋：会"说话"的村民卡
 
     // 动森：村民头像 + AC 对话气泡（显示最近消息，点开聊天）

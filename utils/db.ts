@@ -506,6 +506,7 @@ export const DB = {
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(STORE_CHARACTERS, 'readonly');
+      transaction.onabort = () => reject(transaction.error || new Error('角色读取事务已中止'));
       const store = transaction.objectStore(STORE_CHARACTERS);
       const request = store.getAll();
       request.onsuccess = () => resolve(request.result || []);

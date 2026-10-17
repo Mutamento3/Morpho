@@ -2,6 +2,8 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, CharacterGroup, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile } from '../types';
 import { DB } from '../utils/db';
+import { startupRead } from '../utils/startupRead';
+import { createStartupDiagnostics } from '../utils/startupDiagnostics';
 import { modelRejectsSamplingParams, stripSamplingParams, isSamplingParamError } from '../utils/samplingParamCompat';
 import { extractImagesInPlace, deepCloneForExport } from '../utils/backupExport';
 import { isBlobRef, getBlobForRef, migrateDataUrlToRef, migrateAppearancePresetBlobRefs, resolveBlobRefsDeep, BLOBREF_PREFIX, deleteBlobRefIfUnreferenced } from '../utils/blobRef';
@@ -1229,6 +1231,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const clearLogs = () => setSystemLogs([]);
 
   useEffect(() => {
+    const startupDiagnostics = createStartupDiagnostics((title, details) => setErrorDialog({ title, details }));
     const loadSettings = async () => {
         // ... (existing load logic)
         const savedThemeStr = localStorage.getItem('os_theme');
@@ -1400,42 +1403,49 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         // localStorage 镜像回填：部分浏览器/清理工具会只清 localStorage 而留下 IndexedDB，
         // 导致「主题回初始 / 盲盒收藏册清空 / API 配置丢失」三连。必须在 loadSettings
         // 读 localStorage 之前完成回填。见 utils/lsMirror.ts。
+        startupDiagnostics.stage('恢复本地设置镜像');
         const healedKeys = await initLocalStorageMirror().catch(() => [] as string[]);
         if (healedKeys.length > 0) {
             console.warn('[lsMirror] localStorage 疑似被清除，已从 IndexedDB 镜像回填:', healedKeys);
             setTimeout(() => addToast(`检测到本地设置曾被浏览器清除，已自动恢复 ${healedKeys.length} 项（主题 / API 等）`, 'info'), 2500);
         }
 
+        startupDiagnostics.stage('加载设置和外观素材');
         await loadSettings();
 
         // 老用户库存的鲨盘图链接就地改写成 jsDelivr（幂等、跑一次）。放在读 characters 之前，
         // 让下面 getAllCharacters 拿到的就是改好的数据。见 utils/sharkpanAssetMigration.ts。
+        startupDiagnostics.stage('迁移旧版素材');
         await migrateSharkpanAssets();
 
-        // 用 allSettled 而非 all：早期 Promise.all 只要任意一个 store 读取 reject，
+        // 非核心 store 独立降级；角色读取失败必须终止初始化，不能当成空库播种。
+        // 所有读取限制等待时间并重试，避免某个 store 挂起拖住整个首页。
+        // 早期 Promise.all 只要任意一个 store 读取 reject，
         // 整批加载就全挂 → setCharacters / setWorldbooks 都不执行 → 角色和世界书"凭空消失"
         // （数据其实还在 IndexedDB 里，只是没读进 state）→ Chat 渲染时 char 为 undefined 直接崩。
         // 改成各 store 独立失败，一个坏掉不连累其余，最大限度保住用户数据。
-        const settle = async <T,>(p: Promise<T>, label: string, fallback: T): Promise<T> => {
+        const settle = async <T,>(read: () => Promise<T>, label: string, fallback: T): Promise<T> => {
             try {
-                return await p;
+                return await startupDiagnostics.read(label, () => startupRead(read));
             } catch (e) {
                 console.error(`Data init: 读取 ${label} 失败，已降级`, e);
                 return fallback;
             }
         };
 
+        startupDiagnostics.stage('读取本地数据库');
         const [dbChars, dbThemes, dbUser, dbGroups, dbWorldbooks, dbNovels, dbSongs, dbCharGroups] = await Promise.all([
-            settle(DB.getAllCharacters(), 'characters', [] as CharacterProfile[]),
-            settle(DB.getThemes(), 'themes', [] as ChatTheme[]),
-            settle(DB.getUserProfile(), 'userProfile', null as UserProfile | null),
-            settle(DB.getGroups(), 'groups', [] as GroupProfile[]),
-            settle(DB.getAllWorldbooks(), 'worldbooks', [] as Worldbook[]),
-            settle(DB.getAllNovels(), 'novels', [] as NovelBook[]),
-            settle(DB.getAllSongs(), 'songs', [] as SongSheet[]),
-            settle(DB.getCharacterGroups(), 'characterGroups', [] as CharacterGroup[])
+            startupDiagnostics.read('characters', () => startupRead(() => DB.getAllCharacters())),
+            settle(() => DB.getThemes(), 'themes', [] as ChatTheme[]),
+            settle(() => DB.getUserProfile(), 'userProfile', null as UserProfile | null),
+            settle(() => DB.getGroups(), 'groups', [] as GroupProfile[]),
+            settle(() => DB.getAllWorldbooks(), 'worldbooks', [] as Worldbook[]),
+            settle(() => DB.getAllNovels(), 'novels', [] as NovelBook[]),
+            settle(() => DB.getAllSongs(), 'songs', [] as SongSheet[]),
+            settle(() => DB.getCharacterGroups(), 'characterGroups', [] as CharacterGroup[])
         ]);
 
+        startupDiagnostics.stage('校验角色资料与保存兼容更新');
         let finalChars = dbChars;
 
         if (!finalChars.some(c => c.id === sullyV2.id)) {
@@ -1581,6 +1591,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           setActiveCharacterId(initialCharacter.id);
         }
 
+        startupDiagnostics.stage('恢复群组及其余本地资料');
         setGroups(dbGroups);
         // 内置群聊「群聊测试」：固定 2 个 AI（先写死），角色1 默认选 Morpho，角色2 空着由用户在群设置里挑。
         // 群内独立模型后端（memberApiConfigs）只存本群，不碰角色身上的 chatApiConfig；某人没填则回退全局 API。
@@ -1613,11 +1624,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         setSongs(dbSongs);
         setCustomThemes(dbThemes);
         if (dbUser) setUserProfile(dbUser);
+        setIsDataLoaded(true);
 
       } catch (err) {
         console.error('Data init failed:', err);
+        startupDiagnostics.fail(err);
+        addToast('本地资料加载失败，请重新打开页面重试；无需清除网站数据。', 'error');
       } finally {
-        setIsDataLoaded(true);
+        startupDiagnostics.finish();
 
         // 检测：远程向量存储已配置但远程可能缺数据（导入备份后）
         try {
@@ -1642,6 +1656,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     };
 
     initData();
+    return () => startupDiagnostics.finish();
   }, []);
 
   // --- NEW: Apply Theme CSS Variables ---
