@@ -112,10 +112,10 @@ export function buildNovelAiDecisionPrompt(char: CharacterProfile, userProfile: 
     const cfg = char.novelAiImageGeneration;
     if (!cfg?.enabled) return '';
     const proactiveRule = cfg.allowProactive
-        ? `用户明确索图时必须使用；也可以极低频地主动发图，但不要连续两轮触发。`
+        ? `用户已允许角色主动发图。用户明确索图、要求重画或更换构图时，直接使用生图，不必再次询问确认。也可以根据当前聊天自然地主动分享自拍、穿搭、所见场景或互动瞬间，不需要等待用户说出“生成图片”。没有低频或相邻轮次限制；连续索图或场景有新的画面时，可以连续回合发图。发图服务于当前对话，不必每轮都发，也不要反复发送同一画面。`
         : `只有 ${userProfile.name} 在最新消息里明确要求看图、自拍或照片时才能使用，绝不能主动触发。`;
     return `
-## 本地私聊生图 2.0（NovelAI，严格规则）
+## 本地私聊生图 2.0（NovelAI）
 ${proactiveRule}
 先结合近期聊天和最新消息，选择一帧能够被画出来的具体瞬间：
 1. 最新消息明确描述照片、视频、直播或自拍时，优先还原那幅媒体画面。

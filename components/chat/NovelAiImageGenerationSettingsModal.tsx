@@ -200,7 +200,7 @@ const NovelAiImageGenerationSettingsModal: React.FC<Props> = ({
                     <section className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-100">
                         <Toggle title="开启生图 2.0" detail="用户明确索图时直接调用，不弹二次付费确认" value={enabled} onChange={setEnabled} color="violet" />
                         <div className="mt-4 border-t border-slate-100 pt-4">
-                            <Toggle title="允许角色主动发图" detail="默认关闭；开启后仍限制为极低频" value={allowProactive} onChange={setAllowProactive} color="pink" />
+                            <Toggle title="允许角色主动发图" detail="默认关闭；开启后可随聊天自然发图，允许连续回合发送" value={allowProactive} onChange={setAllowProactive} color="pink" />
                         </div>
                     </section>
 

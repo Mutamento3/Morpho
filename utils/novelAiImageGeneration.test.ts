@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    buildNovelAiDecisionPrompt,
     buildNovelAiPayload,
     buildNovelAiPrompt,
     extractNovelAiDirective,
@@ -9,6 +10,16 @@ import {
 } from './novelAiImageGeneration';
 
 describe('novelAiImageGeneration', () => {
+    it('allows contextual and consecutive images only with proactive permission', () => {
+        const user = { name: '用户' } as Parameters<typeof buildNovelAiDecisionPrompt>[1];
+        const character = { name: '角色', novelAiImageGeneration: { enabled: true, allowProactive: true } } as Parameters<typeof buildNovelAiDecisionPrompt>[0];
+        const prompt = buildNovelAiDecisionPrompt(character, user);
+        expect(prompt).toContain('可以连续回合发图');
+        expect(prompt).not.toContain('极低频');
+        expect(prompt).not.toContain('不要连续两轮');
+        expect(buildNovelAiDecisionPrompt({ ...character, novelAiImageGeneration: { enabled: true, allowProactive: false } }, user)).toContain('绝不能主动触发');
+        expect(buildNovelAiDecisionPrompt({ ...character, novelAiImageGeneration: { enabled: false } }, user)).toBe('');
+    });
     it('normalizes a base URL and a full generation endpoint', () => {
         expect(novelAiGenerateEndpoint('https://image.novelai.net/')).toBe('https://image.novelai.net/ai/generate-image');
         expect(novelAiGenerateEndpoint('https://proxy.example/ai/generate-image')).toBe('https://proxy.example/ai/generate-image');
