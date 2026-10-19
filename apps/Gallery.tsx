@@ -82,14 +82,14 @@ const Gallery: React.FC = () => {
         if (!ids.length || deletingRef.current) return;
         setConfirmDialog({
             isOpen: true, title: '删除所选照片', variant: 'danger',
-            message: `确定删除选中的 ${ids.length} 张照片吗？仅从相册移除，聊天中的图片和消息会保留。相册删除无法撤销。`,
+            message: `确定删除选中的 ${ids.length} 张照片吗？将同步删除该角色私聊中使用同一图片地址的图片消息，文字消息保留。删除无法撤销。`,
             onConfirm: async () => {
                 if (deletingRef.current) return;
                 deletingRef.current = true;
                 setIsDeleting(true);
                 setConfirmDialog(null);
                 try {
-                    await DB.deleteGalleryImages(ids);
+                    await DB.deleteGalleryImages(ids, true);
                     const removed = new Set(ids);
                     setImages(current => current.filter(img => !removed.has(img.id)));
                     exitSelection();
@@ -112,13 +112,11 @@ const Gallery: React.FC = () => {
             setConfirmDialog({
                 isOpen: true,
                 title: '删除相册',
-                message: `确定要删除「${char?.name || ''}」的所有照片吗？此操作无法撤销。`,
+                message: `确定要删除「${char?.name || ''}」的所有照片吗？将同步删除该角色私聊中的对应图片消息，文字消息保留。此操作无法撤销。`,
                 variant: 'danger',
                 onConfirm: async () => {
                     const imgs = await DB.getGalleryImages(charId);
-                    for (const img of imgs) {
-                        await DB.deleteGalleryImage(img.id);
-                    }
+                    await DB.deleteGalleryImages(imgs.map(img => img.id), true);
                     setAlbumCounts(prev => ({ ...prev, [charId]: 0 }));
                     addToast('相册已清空', 'success');
                     setConfirmDialog(null);
@@ -140,10 +138,10 @@ const Gallery: React.FC = () => {
         setConfirmDialog({
             isOpen: true,
             title: '删除照片',
-            message: '确定要删除这张照片吗？',
+            message: '确定要删除这张照片及该角色私聊中的对应图片消息吗？文字消息保留，删除无法撤销。',
             variant: 'danger',
             onConfirm: async () => {
-                await DB.deleteGalleryImage(selectedImage.id);
+                await DB.deleteGalleryImage(selectedImage.id, true);
                 setImages(prev => prev.filter(img => img.id !== selectedImage.id));
                 setView('grid');
                 setSelectedImage(null);

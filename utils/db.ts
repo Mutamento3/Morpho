@@ -858,6 +858,45 @@ export const DB = {
       transaction.objectStore(STORE_GROUPS).delete(id);
   },
 
+  // Keep the newest 200 image messages in each group (message insertion order).
+  // Replace old inline image payloads, including quote snapshots, without touching shared blobs.
+  pruneGroupImages: async (groupId: string): Promise<number> => {
+      if (!groupId) return 0;
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_MESSAGES, 'readwrite');
+          const index = tx.objectStore(STORE_MESSAGES).index('groupId');
+          const removed = new Set<number>();
+          let count = 0;
+          tx.oncomplete = () => resolve(removed.size);
+          tx.onerror = () => reject(tx.error || new Error('群聊图片清理失败'));
+          tx.onabort = () => reject(tx.error || new Error('群聊图片清理已取消'));
+          const request = index.openCursor(IDBKeyRange.only(groupId), 'prev');
+          request.onsuccess = () => {
+              const cursor = request.result;
+              if (cursor) {
+                  const message = cursor.value as Message;
+                  if (message.type === 'image' && message.content && ++count > 200) {
+                      removed.add(message.id);
+                      cursor.update({ ...message, type: 'text', content: '[图片已自动清理：本群仅保留最近200张图片]', metadata: { imageAutoCleaned: true } });
+                  }
+                  cursor.continue();
+              } else if (removed.size) {
+                  const quotes = index.openCursor(IDBKeyRange.only(groupId));
+                  quotes.onsuccess = () => {
+                      const quote = quotes.result;
+                      if (!quote) return;
+                      const message = quote.value as Message;
+                      if (message.replyTo && removed.has(message.replyTo.id)) {
+                          quote.update({ ...message, replyTo: { ...message.replyTo, content: '[图片已自动清理]' } });
+                      }
+                      quote.continue();
+                  };
+              }
+          };
+      });
+  },
+
   getGroupMessages: async (groupId: string): Promise<Message[]> => {
       const db = await openDB();
       return new Promise((resolve, reject) => {
@@ -1300,23 +1339,49 @@ export const DB = {
       });
   },
 
-  deleteGalleryImage: async (id: string): Promise<void> => {
-      const db = await openDB();
-      const transaction = db.transaction(STORE_GALLERY, 'readwrite');
-      transaction.objectStore(STORE_GALLERY).delete(id);
+  deleteGalleryImage: async (id: string, deleteChatImages = false): Promise<void> => {
+      await DB.deleteGalleryImages([id], deleteChatImages);
   },
 
   // Delete album records atomically; chat messages and shared image assets remain intact.
-  deleteGalleryImages: async (ids: string[]): Promise<void> => {
+  deleteGalleryImages: async (ids: string[], deleteChatImages = false): Promise<void> => {
       if (!ids.length) return;
       const db = await openDB();
       return new Promise((resolve, reject) => {
-          const transaction = db.transaction(STORE_GALLERY, 'readwrite');
+          const transaction = db.transaction(deleteChatImages ? [STORE_GALLERY, STORE_MESSAGES] : [STORE_GALLERY], 'readwrite');
           transaction.oncomplete = () => resolve();
           transaction.onerror = () => reject(transaction.error || new Error('相册删除失败'));
           transaction.onabort = () => reject(transaction.error || new Error('相册删除已取消'));
           const store = transaction.objectStore(STORE_GALLERY);
-          for (const id of new Set(ids)) store.delete(id);
+          const selected = new Map<string, Set<string>>();
+          const uniqueIds = [...new Set(ids)];
+          let remaining = uniqueIds.length;
+          for (const id of uniqueIds) {
+              if (!deleteChatImages) { store.delete(id); continue; }
+              const request = store.get(id);
+              request.onsuccess = () => {
+                  const image = request.result as GalleryImage | undefined;
+                  if (image?.url) {
+                      const urls = selected.get(image.charId) || new Set<string>();
+                      urls.add(image.url);
+                      selected.set(image.charId, urls);
+                  }
+                  store.delete(id);
+                  if (--remaining !== 0) return;
+                  // Cursor scan per affected character avoids loading their full image history into RAM.
+                  const messages = transaction.objectStore(STORE_MESSAGES);
+                  for (const [charId, urls] of selected) {
+                      const cursorRequest = messages.index('charId').openCursor(IDBKeyRange.only(charId));
+                      cursorRequest.onsuccess = () => {
+                          const cursor = cursorRequest.result;
+                          if (!cursor) return;
+                          const message = cursor.value as Message;
+                          if (!message.groupId && message.type === 'image' && urls.has(message.content)) cursor.delete();
+                          cursor.continue();
+                      };
+                  }
+              };
+          }
       });
   },
 

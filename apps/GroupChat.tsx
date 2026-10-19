@@ -507,7 +507,7 @@ const GroupChat: React.FC = () => {
     useEffect(() => {
         if (activeGroup) {
             setVisibleCount(MESSAGE_PAGE_SIZE);
-            DB.getRecentGroupMessagesWithCount(activeGroup.id, MESSAGE_PAGE_SIZE).then(({ messages: msgs, totalCount }) => {
+            DB.pruneGroupImages(activeGroup.id).catch(() => { addToast('旧图片清理失败，已保留原图，下次进入群聊会重试', 'error'); }).then(() => DB.getRecentGroupMessagesWithCount(activeGroup.id, MESSAGE_PAGE_SIZE)).then(({ messages: msgs, totalCount }) => {
                 setMessages(msgs);
                 setTotalMsgCount(totalCount);
             });
@@ -998,6 +998,10 @@ const GroupChat: React.FC = () => {
         }
 
         const savedUserMsgId = await DB.saveMessage(newMessage);
+        if (type === 'image') {
+            try { await DB.pruneGroupImages(activeGroup.id); }
+            catch { addToast('图片已发送，但旧图片清理失败，下次进入群聊会重试', 'error'); }
+        }
 
         // 与单聊共用同一种卡片数据结构：识别链接后补抓标题、正文和封面，
         // 建卡成功就删掉原始分享文案，只保留一张可读、可点击的卡片。
