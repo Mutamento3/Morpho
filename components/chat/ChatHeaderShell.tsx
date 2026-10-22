@@ -230,11 +230,11 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     // 刘海段就是顶栏自己的颜色，和其余 App 统一无缝（取代旧的「透明 spacer」方案）。
     // minHeight 是地板不是固定高度——border-box 下 padding 在它之上叠加把元素撑高、不挤压内容（区别于固定 h-NN 会劈开）。
     // Chat 在 SELF_SAFE_AREA_APPS 名单里，外壳不再加 safe-top，这里加一次不会重复。
-    // 桌面安装版在原生安全区之外保留背景缓冲；普通浏览器仍使用原有间距。
+    // 原始安全区间距；IOS27.01.1 由白框预设单独选择。
 
     const headerSafeStyle: React.CSSProperties = {
         minHeight: headerBaseHeight,
-        paddingTop: 'calc(var(--safe-top) + var(--chat-edge-clearance, 0px))',
+        paddingTop: 'var(--safe-top)',
     };
     const primaryTextClass = acnh ? 'text-[#6b5a3e]' : isDarkHeader ? 'text-white' : isPixelHeader ? 'text-[#fff7ed]' : 'text-slate-800';
     const secondaryTextClass = acnh ? 'text-[#5a9e7a]' : isDarkHeader ? 'text-slate-400' : isPixelHeader ? 'text-[#f3ddc7]' : 'text-slate-400';
@@ -421,7 +421,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     <div className="w-10" />
                 </div>
             ) : useCenteredLayout ? (
-                <div className="relative w-full min-h-[56px] flex items-end justify-center">
+                <div className="sully-chat-main relative w-full min-h-[56px] flex items-end justify-center">
                     <button onClick={onClose} className={`sully-chat-back absolute left-0 bottom-2 p-2 ${iconButtonClass}`}>
                         <CaretLeft className="w-5 h-5" weight="bold" />
                     </button>
@@ -440,7 +440,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     </button>
                 </div>
             ) : (
-                <div className="flex items-center gap-3 w-full">
+                <div className="sully-chat-main flex items-center gap-3 w-full">
                     <button onClick={onClose} className={`sully-chat-back p-2 -ml-2 ${iconButtonClass}`}>
                         <CaretLeft className="w-5 h-5" weight="bold" />
                     </button>
@@ -455,6 +455,16 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 </div>
             )}
 
+            {!selectionMode && (
+                <div className="sully-chat-ios-title" style={{ display: 'none' }}>
+                    <button onClick={onClose} aria-label="返回" className={`sully-chat-back ${iconButtonClass}`}><CaretLeft className="w-5 h-5" weight="bold" /></button>
+                    <button onClick={onShowCharsPanel} className="sully-chat-ios-identity" aria-label={`查看${activeCharacter.name}的会话设置`}>
+                        <span className="sully-chat-name">{activeCharacter.name}</span>
+                        <span className="sully-chat-status"><span className="sully-chat-online-dot" />{statusText ?? 'Online'}</span>
+                    </button>
+                    <button onClick={onTriggerAI} aria-label={triggerIcon === 'stop' ? '停止生成' : '触发 AI'} className={`sully-chat-trigger ${actionButtonClass}`}>{triggerIconNode}</button>
+                </div>
+            )}
             {isBuffListExpanded && hiddenBuffCount > 0 && (
                 <div ref={buffPanelRef} className="absolute top-full left-4 right-4 mt-1 bg-white rounded-xl shadow-lg border border-slate-200 p-3 z-40">
                     <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">全部状态</div>

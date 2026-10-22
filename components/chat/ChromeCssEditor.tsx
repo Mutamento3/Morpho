@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { IOS_CHROME_CSS, UNIVERSAL_CHROME_CSS } from '../../utils/iosChromePreset';
 import { DB } from '../../utils/db';
 import { Capacitor } from '@capacitor/core';
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
@@ -67,6 +68,8 @@ const extractSwatch = (code: string): string => {
 
 // 内置完整风格（点击=替换文本框、立刻生效）。
 const PRESETS: Preset[] = [
+    { name: '通用版', swatch: '#f8fafc', code: UNIVERSAL_CHROME_CSS },
+    { name: 'IOS27.01.1', swatch: 'linear-gradient(#e2e8f0,#fff)', code: IOS_CHROME_CSS },
     {
         name: '奶油少女',
         swatch: 'linear-gradient(135deg,#ffe3ef,#fff2e2 55%,#f1e7ff)',
