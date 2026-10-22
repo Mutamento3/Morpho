@@ -6,13 +6,14 @@ export const UNIVERSAL_CHROME_CSS = `/* 通用版：原有头像、名字与在�
 export const IOS_CHROME_CSS = `/* IOS27.01.1 · 手动选择；不按系统自动启用 */
 .sully-chat-header{
   --ios-title-bottom:2px;
-  height:6rem!important;
-  min-height:6rem!important;
+
+
   padding-top:var(--safe-top,0px)!important;
   background:#fff!important;border-bottom:1px solid #e2e8f0!important;
   backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
 }
-.sully-chat-header > .sully-chat-main{display:none!important;}
+/* 原内容隐形但保留占位，沿用通用版的密度、安全区与实际撑开高度。 */
+.sully-chat-header > .sully-chat-main{visibility:hidden!important;pointer-events:none!important;}
 .sully-chat-header > .sully-chat-main .sully-chat-back,
 .sully-chat-header > .sully-chat-main .sully-chat-trigger{display:none!important;}
 .sully-chat-ios-title{display:flex!important;position:absolute!important;left:20px!important;right:20px!important;bottom:var(--ios-title-bottom)!important;align-items:center!important;gap:8px!important;}
