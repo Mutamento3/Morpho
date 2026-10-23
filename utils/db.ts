@@ -953,6 +953,26 @@ export const DB = {
       transaction.objectStore(STORE_SOCIAL_POSTS).put(post);
   },
 
+  // 只清理朋友圈 store 中的旧动态，不触碰私聊 messages 或图片资源。
+  pruneMomentPosts: async (): Promise<SocialPost[]> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_SOCIAL_POSTS, 'readwrite');
+          const store = tx.objectStore(STORE_SOCIAL_POSTS);
+          let retained: SocialPost[] = [];
+          const request = store.getAll();
+          request.onsuccess = () => {
+              const moments = (request.result as SocialPost[])
+                  .filter(post => post.platform === 'moments')
+                  .sort((a, b) => b.timestamp - a.timestamp || b.id.localeCompare(a.id));
+              retained = moments.slice(0, 30);
+              moments.slice(30).forEach(post => store.delete(post.id));
+          };
+          tx.oncomplete = () => resolve(retained);
+          tx.onerror = () => reject(tx.error || new Error('朋友圈清理失败'));
+          tx.onabort = () => reject(tx.error || new Error('朋友圈清理中止'));
+      });
+  },
   deleteSocialPost: async (id: string): Promise<void> => {
       const db = await openDB();
       const transaction = db.transaction(STORE_SOCIAL_POSTS, 'readwrite');

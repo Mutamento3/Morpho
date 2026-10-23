@@ -1,0 +1,20 @@
+import { expect, it } from 'vitest';
+import { DB } from './db';
+import { loadMomentPosts, loadMomentsMemory } from './moments';
+import type { SocialPost } from '../types';
+it('keeps newest 30 moments, preserves private card snapshots and other platforms, and compacts history first', async () => {
+    const posts=Array.from({length:33},(_,i)=>({id:`retention-${i}`,platform:'moments',timestamp:1000+i,content:`旧生活片段${i}`,authorName:'角色',authorCharId:'retention-role',authorType:'character',comments:[],images:['image-ref'],title:'',tags:[],bgStyle:'',likes:0,isCollected:false,isLiked:false} as SocialPost));
+    for(const post of posts) await DB.saveSocialPost(post);
+    const other={...posts[0],id:'other-platform',platform:'twitter'} as SocialPost;
+    await DB.saveSocialPost(other);
+    await DB.saveMessage({charId:'retention-role',role:'assistant',type:'social_card',content:posts[0].content,metadata:{post:posts[0],momentId:posts[0].id}});
+    const retained=await loadMomentPosts();
+    expect(retained).toHaveLength(30);
+    expect(retained.map(p=>p.id)).toEqual(posts.slice(3).reverse().map(p=>p.id));
+    expect((await DB.getSocialPosts()).find(p=>p.id===other.id)).toBeDefined();
+    const cards=await DB.getMessagesByCharId('retention-role',true);
+    expect(cards).toHaveLength(1);
+    expect(cards[0].metadata?.post).toEqual(posts[0]);
+    expect((await loadMomentsMemory()).roles['retention-role'].summary).toContain('旧生活片段0');
+    expect(await loadMomentPosts()).toHaveLength(30);
+});
