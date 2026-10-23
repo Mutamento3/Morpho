@@ -3197,6 +3197,8 @@ export interface SocialPost {
 export type MomentsActivityLevel = 'quiet' | 'normal' | 'lively';
 
 export interface MomentsSettings {
+    independentApiEnabled?: boolean;
+    independentApi?: Pick<APIConfig, 'baseUrl' | 'apiKey' | 'model'>;
     version: 1;
     coverImage?: string;
     coverPositionY: number;

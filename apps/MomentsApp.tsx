@@ -5,6 +5,8 @@ import {
 } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import type { MomentsSettings, SocialComment, SocialPost } from '../types';
+import MomentsApiSettings from '../components/settings/MomentsApiSettings';
+import { resolveMomentsApi, normalizeMomentsApi } from '../utils/momentsApi';
 import TokenImg from '../components/os/TokenImg';
 import { putImageBlob, useBlobRefUrl } from '../utils/blobRef';
 import { processImageToBlob } from '../utils/file';
@@ -423,9 +425,16 @@ const SettingsPanel: React.FC<{
     onGenerate: (settings?: MomentsSettings) => Promise<void>;
     onClose: () => void;
 }> = ({ settings, characters, generating, onChange, onGenerate, onClose }) => {
+    const { apiConfig, addToast } = useOS();
     const [draft, setDraft] = useState(settings);
     const coverUrl = useBlobRefUrl(draft.coverImage);
-    const save = async () => { await onChange(draft); onClose(); };
+    const saveDraft = async () => {
+        resolveMomentsApi(draft, apiConfig);
+        const next = { ...draft, ...(draft.independentApi ? { independentApi: normalizeMomentsApi(draft.independentApi) } : {}) };
+        await onChange(next);
+        return next;
+    };
+    const save = async () => { try { await saveDraft(); onClose(); } catch (error: any) { addToast(error.message || '保存失败', 'error'); } };
     const toggleChar = (id: string) => setDraft(prev => ({ ...prev, invitedCharIds: prev.invitedCharIds.includes(id) ? prev.invitedCharIds.filter(x => x !== id) : [...prev.invitedCharIds, id] }));
     const upload = async (file?: File) => {
         if (!file) return;
@@ -436,6 +445,7 @@ const SettingsPanel: React.FC<{
     return (
         <ModalShell title="朋友圈设置" onClose={onClose}>
             <div className="overflow-y-auto px-5 py-4 space-y-6 text-sm">
+                <MomentsApiSettings settings={draft} onChange={setDraft} />
                 <section>
                     <div className="font-semibold text-slate-800 mb-2">封面与名字</div>
                     <label className="block h-28 rounded-xl overflow-hidden bg-slate-100 cursor-pointer relative">
@@ -477,7 +487,7 @@ const SettingsPanel: React.FC<{
                         </select>
                     </label>
                     <label className="flex items-center justify-between gap-3"><span>最短间隔</span><span className="flex items-center gap-2"><input type="number" min="1" max="72" value={draft.minIntervalHours} onChange={e => setDraft({ ...draft, minIntervalHours: Math.max(1, Number(e.target.value) || 1) })} className="w-16 bg-slate-100 rounded-lg px-2 py-2 text-center" />小时</span></label>
-                    <button disabled={generating || !draft.invitedCharIds.length} onClick={async () => { await onChange(draft); await onGenerate(draft); }} className="w-full h-11 rounded-xl border border-[#576b95] text-[#576b95] disabled:opacity-40">
+                    <button disabled={generating || !draft.invitedCharIds.length} onClick={async () => { try { const next = await saveDraft(); await onGenerate(next); } catch (error: any) { addToast(error.message || '保存失败', 'error'); } }} className="w-full h-11 rounded-xl border border-[#576b95] text-[#576b95] disabled:opacity-40">
                         {generating ? '正在生成…' : '现在生成一条（调试）'}
                     </button>
                 </section>
@@ -518,7 +528,7 @@ const Composer: React.FC<{
                     <label className="h-12 flex items-center justify-between border-b border-slate-100"><span className="flex items-center gap-2"><MapPin size={18} />所在位置</span><input type="checkbox" checked={locationEnabled} onChange={e => setLocationEnabled(e.target.checked)} className="w-5 h-5 accent-[#07c160]" /></label>
                     {locationEnabled && <input value={location} onChange={e => setLocation(e.target.value)} className="w-full h-11 mt-2 rounded-xl bg-slate-100 px-3 outline-none" placeholder="填写位置（可留空）" />}
                 </div>
-                <p className="mt-5 text-xs text-slate-400 leading-relaxed">点击发表后会返回朋友圈并在后台调用一次全局 API；动态发送完成后，点赞和评论会陆续出现。</p>
+                <p className="mt-5 text-xs text-slate-400 leading-relaxed">点击发表后会返回朋友圈并在后台调用一次朋友圈所选 API（未启用独立配置时使用全局 API）；动态发送完成后，点赞和评论会陆续出现。</p>
             </div>
             <div className="p-4 border-t border-slate-100"><button onClick={publish} disabled={!content.trim() && !images.length} className="w-full h-12 rounded-xl bg-[#07c160] text-white font-semibold disabled:opacity-40">发表</button></div>
         </ModalShell>

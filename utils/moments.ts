@@ -9,6 +9,7 @@ import type {
     UserProfile,
 } from '../types';
 import { DB } from './db';
+import { resolveMomentsApi } from './momentsApi';
 import { selectMomentsRecentChat } from './momentsContext';
 import { ContextBuilder } from './context';
 import { extractContent, safeResponseJson } from './safeApi';
@@ -367,7 +368,7 @@ ${recentMoments || '（暂无）'}
 {"content":"朋友圈正文","location":"地点","likedBy":["角色ID"],"comments":[{"id":"c1","authorId":"角色ID","content":"评论"},{"id":"c2","authorId":"角色ID","content":"回复","replyToCommentId":"c1","replyToName":"被回复者名字"}]}
 只可使用上面给出的角色 ID。正文建议 8—100 字；评论口语化、长短不齐。`;
 
-    const result = await callMomentsDirector(options.apiConfig, prompt);
+    const result = await callMomentsDirector(resolveMomentsApi(options.settings, options.apiConfig), prompt);
     const content = String(result?.content || '').trim().slice(0, 300);
     if (!content) throw new Error('模型没有返回可发布的朋友圈正文');
     const duplicates = posts.filter(p => p.authorCharId === author.id).slice(0, 18);
@@ -428,7 +429,7 @@ ${options.content || '（只发了图片）'}
 ${briefs}
 
 只输出：{"comments":[{"id":"c1","authorId":"角色ID","content":"评论"},{"id":"c2","authorId":"角色ID","content":"回复","replyToCommentId":"c1","replyToName":"名字"}]}`;
-    const result = await callMomentsDirector(options.apiConfig, prompt, options.images);
+    const result = await callMomentsDirector(resolveMomentsApi(options.settings, options.apiConfig), prompt, options.images);
     const comments = normalizeComments(result?.comments, invited, '', createdAt);
     const commentingIds = new Set(comments.map(comment => comment.authorCharId).filter(Boolean));
     if (invited.some(char => !commentingIds.has(char.id))) {
