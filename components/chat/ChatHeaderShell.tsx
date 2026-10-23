@@ -462,7 +462,16 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         <span className="sully-chat-name">{activeCharacter.name}</span>
                         <span className="sully-chat-status"><span className="sully-chat-online-dot" />{statusText ?? 'Online'}</span>
                     </button>
-                    <button onClick={onTriggerAI} aria-label={triggerIcon === 'stop' ? '停止生成' : '触发 AI'} className={`sully-chat-trigger ${actionButtonClass}`}>{triggerIconNode}</button>
+                    <div className="sully-chat-ios-actions flex items-center gap-1 shrink-0">
+                        {lastTokenUsage != null && (
+                            <span className="sully-chat-token text-[9px] px-1 py-0.5 rounded-md font-mono border bg-slate-100 text-slate-400 border-slate-200"
+                                aria-label={`本次 token 用量 ${lastTokenUsage}`}
+                                title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion} | msgs: ${tokenBreakdown.msgCount} | pass: ${tokenBreakdown.pass}` : `本次 token 用量：${lastTokenUsage}`}>
+                                {lastTokenUsage}
+                            </span>
+                        )}
+                        <button onClick={onTriggerAI} aria-label={triggerIcon === 'stop' ? '停止生成' : '触发 AI'} className={`sully-chat-trigger p-2 ${actionButtonClass}`}>{triggerIconNode}</button>
+                    </div>
                 </div>
             )}
             {isBuffListExpanded && hiddenBuffCount > 0 && (
