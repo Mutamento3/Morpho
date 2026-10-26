@@ -1,3 +1,4 @@
+import { assembleCompatibleBackup, getBackupCompatibilityNotice } from '../utils/backupCompatibility';
 
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, CharacterGroup, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile } from '../types';
@@ -9,7 +10,7 @@ import { extractImagesInPlace, deepCloneForExport } from '../utils/backupExport'
 import { isBlobRef, getBlobForRef, migrateDataUrlToRef, migrateAppearancePresetBlobRefs, resolveBlobRefsDeep, BLOBREF_PREFIX, deleteBlobRefIfUnreferenced } from '../utils/blobRef';
 import { LEGACY_DEFAULT_WALLPAPER, isLegacyDefaultWallpaper, shouldPreserveLegacyDefaultWallpaper } from '../utils/wallpaperCompat';
 import { migrateSharkpanAssets } from '../utils/sharkpanAssetMigration';
-import { writeV2Backup, assembleV2Backup, type BackupManifest, type ZipFileWriter, type ZipFileReader } from '../utils/backupFormat';
+import { writeV2Backup, type BackupManifest, type ZipFileWriter, type ZipFileReader } from '../utils/backupFormat';
 import { encodeVectorsForBackup } from '../utils/memoryPalace/db';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { WorldScheduler, toTickEntries } from '../utils/worldHome/scheduler';
@@ -3954,11 +3955,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       } catch {
                           throw new Error("损坏的备份包：manifest.json 解析失败");
                       }
-                      data = await assembleV2Backup(
+                      data = await assembleCompatibleBackup(
                           loadedZip as unknown as ZipFileReader,
                           manifest,
                           {
                               onYield: () => new Promise<void>(r => setTimeout(r, 0)),
+                              onCompatibilityWarning: message => addToast(message, 'info'),
                               onShardProgress: (field, idx, total) => {
                                   showImportProgress('parsing', '正在解析备份分片...',
                                       5 + Math.floor((idx / Math.max(1, total)) * 25),
@@ -3980,6 +3982,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // 必须发生在 restoreAssetsInPlace / DB.importFullData 之前：不受支持的第三方
           // 备份一旦命中特征就整包拒绝，不能出现“导入了一半才报错”的状态。
           assertSupportedSullyBackup(data);
+          const compatibilityNotice = getBackupCompatibilityNotice(data);
+          if (compatibilityNotice) window.alert(compatibilityNotice);
 
           const hadAssetStoreBackup = data.assets !== undefined;
           const hadCustomIconsBackup = data.customIcons !== undefined;
