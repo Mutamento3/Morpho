@@ -1,3 +1,4 @@
+import WorkDocumentCard from './WorkDocumentCard';
 
 
 
@@ -1356,6 +1357,7 @@ const LifeSimResetCardView: React.FC<{ card: any }> = ({ card }) => {
 };
 
 interface MessageItemProps {
+    onReadDocument?: (m: Message) => Promise<void>;
     msg: Message;
     isFirstInGroup: boolean;
     isLastInGroup: boolean;
@@ -1417,6 +1419,7 @@ interface MessageItemProps {
 }
 
 const MessageItem = React.memo(({
+    onReadDocument,
     msg: m,
     isFirstInGroup,
     isLastInGroup,
@@ -2217,6 +2220,8 @@ const MessageItem = React.memo(({
     }
 
     // --- Webpage Share Card (用户分享的网页 / 视频平台链接) ---
+    if (m.type === 'document_card') return commonLayout(<><WorkDocumentCard onRead={onReadDocument ? () => onReadDocument(m) : undefined} doc={m.metadata?.document || { name: m.content || '文档', source: 'file', status: 'failed', detail: '附件数据不可用' }} />{m.metadata?.documentNote && <p className="text-xs whitespace-pre-wrap break-words mt-2">{m.metadata.documentNote}</p>}</>);
+
     if (m.type === 'webpage_card' && m.metadata?.webpage) {
         const wp = m.metadata.webpage;
         const vd = wp.video; // videoParser 解析路径才有：平台/作者/热度

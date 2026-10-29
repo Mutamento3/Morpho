@@ -1,0 +1,9 @@
+name = "morpho-document-reader"
+main = "index.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+[browser]
+binding = "BROWSER"
+[vars]
+ALLOWED_ORIGIN = "https://nguyenthiduyenn2602-jpg.github.io"
+# Set READER_TOKEN with: pnpm exec wrangler secret put READER_TOKEN

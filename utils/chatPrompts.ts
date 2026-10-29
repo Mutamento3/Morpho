@@ -1,3 +1,4 @@
+import { documentApiContent } from './workDocuments';
 import { buildSleepReminderGuard } from './sleepReminderGuard';
 
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, DailySchedule } from '../types';
@@ -959,6 +960,10 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     content = '[' + speaker + '引用了' + whose + '「' + quoted + '」，并回复了 ↓]\n' + content;
                 }
                 
+                if (m.type === 'document_card') {
+                    const parts = documentApiContent(m.metadata?.document);
+                    return { role: m.role, content: [{ type: 'text', text: timeStr + '\n' + content + '\n' + (m.metadata?.documentNote || '') + (index === historySlice.length - 1 ? '\n' + (timeGapHint || '') : '') }, ...parts] };
+                }
                 if (m.type === 'image') {
                      // 向下兼容：如果图片数据缺失（例如只导入了文字备份），不要把空 URL 发给 API，否则会报错无法回应
                      const hasImageData = typeof m.content === 'string' && (m.content.startsWith('data:') || m.content.startsWith('http'));

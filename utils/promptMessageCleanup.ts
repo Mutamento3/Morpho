@@ -31,7 +31,7 @@ export function flattenContentPartsToText(parts: any[]): string {
         .map((part: any) => part.text || '')
         .join('\n')
         .trim();
-    return text || '[图片]';
+    return (text || '[图片]') + (parts.some((p: any) => p?.type === 'file') ? '\n[附件在本次纯文本降级中未传输，不能声称已读取 PDF。]' : '');
 }
 
 /**

@@ -1,3 +1,4 @@
+import { documentContext } from './workDocuments';
 /**
  * 消息内容规范化：把带特殊 type / metadata 的消息转成可读的单行文本。
  *
@@ -98,6 +99,7 @@ export function normalizeMessageContent(
     userName: string,
 ): string {
     const type = msg.type as string;
+    if (type === 'document_card') return (msg.metadata?.documentNote ? msg.metadata.documentNote + '\n' : '') + documentContext(msg.metadata?.document);
 
     // 纯视觉类给占位；语音优先使用配套转写，避免把音频资源地址送进上下文。
     if (type === 'image') return '[图片]';

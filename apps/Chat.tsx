@@ -1,3 +1,5 @@
+import CollaborationModal from '../components/chat/CollaborationModal';
+import { readWorkLink, loadReaderConfig } from '../utils/workDocuments';
 import SleepReminderGuardModal from '../components/chat/SleepReminderGuardModal';
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
@@ -106,6 +108,9 @@ const Chat: React.FC = () => {
             return getMemoryPalaceHighWaterMark(charId);
         } catch { return 0; }
     }, []);
+    const documentSendingRef = useRef(false);
+    const [readingDocument, setReadingDocument] = useState(false);
+    const [showCollaboration, setShowCollaboration] = useState(false);
     const [showSleepGuard, setShowSleepGuard] = useState(false);
     useEffect(() => { setShowSleepGuard(false); }, [activeCharacterId]);
     const [messages, setMessages] = useState<Message[]>([]);
@@ -1078,7 +1083,19 @@ const Chat: React.FC = () => {
         // 借用户"发送"这个手势解锁音频上下文，好让稍后 AI 回复时的白框提示音能顺利播放（移动端自动播放策略）。
         unlockWhiteboxAudio();
         const text = customContent || input.trim();
-        const type = customType || 'text';
+        let type = customType || 'text';
+        if (type === 'text' && char.collaborationEnabled) {
+            const link = detectFirstUrl(text);
+            if (link) {
+                if (documentSendingRef.current) return;
+                documentSendingRef.current = true; setReadingDocument(true);
+                let document;
+                try { document = await readWorkLink(link, loadReaderConfig()); }
+                finally { documentSendingRef.current = false; setReadingDocument(false); }
+                metadata = { ...metadata, document, documentNote: text };
+                type = 'document_card';
+            }
+        }
 
         // 发消息隐含"回到当前聊天"——退出 windowed 旧消息浏览模式
         if (windowedFocusMsgId !== null) {
@@ -1111,7 +1128,7 @@ const Chat: React.FC = () => {
             return;
         }
 
-        if (!customContent) { setInput(''); localStorage.removeItem(draftKey); }
+        if (!customContent) { setInput(previous => previous === text ? '' : previous); if (localStorage.getItem(draftKey) === text) localStorage.removeItem(draftKey); }
         
         if (type === 'image') {
             const recentChat = messages.slice(-10).map(m => {
@@ -1296,6 +1313,17 @@ const Chat: React.FC = () => {
 
     // 用户点开「收到的转账」卡（角色发来、待处理）选择接收 / 退回：
     // 标记原转账状态 + 补一张回执小卡（role=user，角色侧 prompt 会看到「用户接收/退回了你的转账」）。
+    const handleReadDocument = useCallback(async (message: Message) => {
+        const previous = message.metadata?.document;
+        if (!previous?.url) return;
+        let document = await readWorkLink(previous.url, loadReaderConfig());
+        if (previous.text && (document.status === 'failed' || document.status === 'needs-service')) {
+            document = { ...previous, status: 'partial', detail: '此次重新读取未完成，保留上次正文；不能据此判断文档最新内容。' };
+        }
+        await DB.updateMessageMetadata(message.id, prev => ({ ...(prev || {}), document }));
+        await reloadMessages(visibleCountRef.current);
+    }, [reloadMessages]);
+
     const handleResolveTransfer = useCallback(async (msg: Message, action: 'accepted' | 'returned') => {
         if (!char) return;
         // 只处理仍待处理的转账，避免重复点击造成多张回执。
@@ -1549,6 +1577,7 @@ const Chat: React.FC = () => {
                 setModalType('chat-settings');
                 break;
             }
+            case 'collaboration': { setShowPanel('none'); setShowCollaboration(true); break; }
             case 'sleep-guard': {
                 setShowPanel('none');
                 setShowSleepGuard(true);
@@ -3568,6 +3597,7 @@ const Chat: React.FC = () => {
                             pendingIndicator={osTheme.chatPendingIndicator !== false}
                             onMcdSendCart={handleMcdSendCart}
                             onMcdCandidate={handleMcdCandidate}
+                            onReadDocument={handleReadDocument}
                             onResolveTransfer={handleResolveTransfer}
                             onResolveLifeRecord={handleResolveLifeRecord}
                             onRegenerateGeneratedImage={handleRegenerateGeneratedImage}
@@ -3799,6 +3829,8 @@ const Chat: React.FC = () => {
             </div>
 
 
+            {readingDocument && <div role="status" className="fixed bottom-40 left-1/2 -translate-x-1/2 z-[210] rounded-xl bg-slate-900 text-white px-4 py-3 text-sm shadow-lg">正在读取文档链接……最多约 90 秒</div>}
+            {char && showCollaboration && <CollaborationModal key={char.id} enabled={!!char.collaborationEnabled} onToggle={value => updateCharacter(char.id, { collaborationEnabled: value })} onClose={() => setShowCollaboration(false)} onSend={doc => handleSendText(doc.name, 'document_card', { document: doc })} />}
             {char && showSleepGuard && <SleepReminderGuardModal key={char.id} char={char} onClose={() => setShowSleepGuard(false)} onSave={settings => {
                 updateCharacter(char.id, { sleepReminderGuard: settings });
                 setShowSleepGuard(false);
