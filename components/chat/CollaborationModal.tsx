@@ -1,3 +1,4 @@
+import DocumentReaderSetup from './DocumentReaderSetup';
 import React, { useState } from 'react';
 import { readWorkFile, readWorkLink, loadReaderConfig, READER_CONFIG_KEY, WorkDocument } from '../../utils/workDocuments';
 import WorkDocumentCard from './WorkDocumentCard';
@@ -16,6 +17,7 @@ export default function CollaborationModal({ enabled, onToggle, onClose, onSend 
  <label className="block rounded-xl border p-3">选择文件<input disabled={busy} className="block mt-2 w-full text-xs" type="file" accept=".docx,.pdf,.txt,.md,.csv,.json" onChange={e=>{const f=e.target.files?.[0]; if(f) void run(()=>readWorkFile(f)); e.target.value='';}}/></label>
  <p className="text-xs text-slate-500">单个文件最多 10 MB。Word 提取正文；PDF 作为原附件发送，需要模型和中转接口支持。</p>
  <div className="flex gap-2"><input aria-label="文档链接" className="border rounded-lg p-2 min-w-0 flex-1" placeholder="粘贴文档分享链接" value={url} onChange={e=>setUrl(e.target.value)}/><button disabled={busy||!url.trim()} onClick={()=>void run(()=>readWorkLink(url,config))}>读取</button></div>
+ <DocumentReaderSetup config={config} onConfigured={setConfig} />
  <details><summary className="text-sm cursor-pointer">浏览器读取服务设置</summary><p className="text-xs my-2">仅填写你自己部署的服务。读取时会将分享链接发送给它；需要登录或没有权限的文档不会绕过限制。</p>
  <input aria-label="读取服务地址" className="border rounded p-2 w-full mb-2" placeholder="https://你的服务.workers.dev" value={config.endpoint||''} onChange={e=>setConfig({...config,endpoint:e.target.value.trim()})}/>
  <input aria-label="读取服务令牌" type="password" className="border rounded p-2 w-full" placeholder="服务访问令牌" value={config.token||''} onChange={e=>setConfig({...config,token:e.target.value})}/>

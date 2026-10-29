@@ -1,3 +1,4 @@
+import { getSharedCloudflareToken, rememberCloudflareToken } from '../../utils/cloudflareTokenSession';
 import React, { useEffect, useRef, useState } from 'react';
 import Modal from '../os/Modal';
 import { ActiveMsg2GlobalConfig, RealtimeConfig } from '../../types';
@@ -160,7 +161,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
   // 一键部署：填一枚 CF Token，剩下的（建库、传 worker、写密钥、加定时）都自动做完。
   // Token 只在这次部署期间留在内存里，成功与否都不落盘——它是能改整个账号 Workers 的
   // 权限，真正需要长期留着的那一份已经作为 secret 写进用户自己的 worker 了（自更新用）。
-  const [cfToken, setCfToken] = useState('');
+  const [cfToken, setCfToken] = useState(() => getSharedCloudflareToken()?.token || '');
   const [provisioning, setProvisioning] = useState(false);
   const [provisionStep, setProvisionStep] = useState('');
   /** token 能用在多个账号上时让用户挑一个。 */
@@ -173,7 +174,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
   // 补装更新能力：老办法装的后端里没有 CF_API_TOKEN，点更新会被顶回来。
   // 粘一枚 token 就能就地补上，不用去 Cloudflare 面板。只在真的缺钥匙时才露出来。
   const [attachOpen, setAttachOpen] = useState(false);
-  const [attachToken, setAttachToken] = useState('');
+  const [attachToken, setAttachToken] = useState(() => getSharedCloudflareToken()?.token || '');
   const [attachScriptName, setAttachScriptName] = useState('');
   const [attachNeedsScriptName, setAttachNeedsScriptName] = useState(false);
   const [attachAccounts, setAttachAccounts] = useState<CfAccount[] | null>(null);
@@ -941,7 +942,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
           <input
             type="password"
             value={cfToken}
-            onChange={(e) => setCfToken(e.target.value)}
+            onChange={(e) => { setCfToken(e.target.value); rememberCloudflareToken(e.target.value, '主动消息'); }}
             placeholder="粘贴 Cloudflare API Token"
             autoComplete="off"
             className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:border-violet-400"
@@ -1392,7 +1393,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
                   <input
                     type="password"
                     value={attachToken}
-                    onChange={(e) => setAttachToken(e.target.value)}
+                    onChange={(e) => { setAttachToken(e.target.value); rememberCloudflareToken(e.target.value, '主动消息'); }}
                     placeholder="粘贴 Cloudflare API Token"
                     autoComplete="off"
                     className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:border-violet-400"

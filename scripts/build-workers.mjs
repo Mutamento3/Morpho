@@ -28,6 +28,7 @@ const root = resolve(__dirname, '..');
 //   - per-worker dirs (worker/<name>/src/index.ts → worker/<name>/worker.bundle.js + public/<outName>)
 //   - flat single-file workers (worker/<name>.ts → public/<name>.js only — no worker.bundle.js sibling)
 const WORKERS = [
+  { name: 'document-reader', entryPath: 'worker/document-reader/index.js', outName: 'document-reader.bundle.js', external: ['cloudflare:*', 'node:*'] },
   { name: 'instant-push', outName: 'instant-worker.bundle.js' },
   // instant-push 的 Deno Deploy 入口: 同一份 worker, 换 Deno.serve 包装。
   // worker.deno.bundle.js 供整份贴进 dash.deno.com Playground;
@@ -92,7 +93,7 @@ for (const w of WORKERS) {
   }
 
   for (const out of outputs) {
-    await build({ ...sharedOpts, entryPoints: [entry], outfile: out, banner });
+    await build({ ...sharedOpts, ...(w.external ? { external: w.external, mainFields: ['browser', 'module', 'main'] } : {}), entryPoints: [entry], outfile: out, banner });
   }
 
   const sizeRef = outWorker || outPublic;

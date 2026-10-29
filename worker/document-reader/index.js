@@ -2,12 +2,21 @@ import puppeteer from '@cloudflare/puppeteer';
 import { allowedResource, validateShare, assemblePages } from './core.js';
 export default { async fetch(request,env) {
  const origin=request.headers.get('Origin');
- const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Vary':'Origin',...(origin===env.ALLOWED_ORIGIN?{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Headers':'Content-Type, Authorization','Access-Control-Allow-Methods':'POST, OPTIONS'}:{})};
+ const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Vary':'Origin',...(origin===env.ALLOWED_ORIGIN?{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Headers':'Content-Type, Authorization','Access-Control-Allow-Methods':'GET, POST, OPTIONS'}:{})};
  const reply=(data,status=200)=>new Response(JSON.stringify(data),{status,headers});
  if(origin && origin!==env.ALLOWED_ORIGIN)return reply({error:'来源不允许'},403);
  if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
- if(request.method!=='POST')return reply({error:'仅支持 POST'},405);
+
  if(!env.READER_TOKEN||request.headers.get('Authorization')!==`Bearer ${env.READER_TOKEN}`)return reply({error:'访问令牌不正确'},401);
+ const path=new URL(request.url).pathname;
+ if(path==='/health'&&request.method==='GET')return reply({service:'morpho-document-reader-v1',ok:!!env.BROWSER});
+ if(path==='/browser-check'&&request.method==='POST'){
+  let instance;
+  try{instance=await puppeteer.launch(env.BROWSER);return reply({service:'morpho-document-reader-v1',ok:true});}
+  catch{return reply({service:'morpho-document-reader-v1',ok:false},503);}
+  finally{if(instance)await instance.close().catch(()=>{});}
+ }
+ if(request.method!=='POST'||path!=='/')return reply({error:'无效路径'},404);
  let url;
  try {const body=await request.text();if(body.length>4096)throw Error();url=validateShare(JSON.parse(body).url);}catch{return reply({error:'请提供金山文档分享链接'},400);}
  let browser;
