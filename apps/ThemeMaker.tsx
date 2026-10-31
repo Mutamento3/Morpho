@@ -1,9 +1,11 @@
+import { useHalloweenActive, visibleAvatarStyle } from '../utils/halloweenEvent';
 
 
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { ChatTheme, BubbleStyle } from '../types';
+import AvatarFrameEditor from '../components/appearance/AvatarFrameEditor';
 import { processImage } from '../utils/file';
 import { validateScopedCss, runCssRenderabilityCheck, CssValidationResult } from '../utils/scopedCss';
 
@@ -435,7 +437,8 @@ const PREVIEW_SCENES: PreviewScene[] = [
 ];
 
 const ThemeMaker: React.FC = () => {
-    const { closeApp, addCustomTheme, removeCustomTheme, addToast, characters, updateCharacter, customThemes } = useOS();
+    useHalloweenActive();
+    const { closeApp, addCustomTheme, removeCustomTheme, addToast, characters, updateCharacter, customThemes, userProfile } = useOS();
     const [initialThemeId] = useState(() => `theme-${Date.now()}`);
     const [editingTheme, setEditingTheme] = useState<ChatTheme>({ ...DEFAULT_THEME, id: initialThemeId });
     const [activeTab, setActiveTab] = useState<'user' | 'ai' | 'css'>('user');
@@ -652,7 +655,7 @@ const ThemeMaker: React.FC = () => {
 
         if (type === 'bg') updateStyle('backgroundImage', url);
         else if (type === 'deco') updateStyle('decoration', url);
-        else updateStyle('avatarDecoration', url);
+        else updateTheme(prev => ({ ...prev, [activeTab]: { ...prev[activeTab as 'user' | 'ai'], avatarDecoration: url, avatarDecorationEvent: undefined }, ...(userFollowAi && activeTab === 'ai' ? { user: { ...prev.user, avatarDecoration: url, avatarDecorationEvent: undefined } } : {}) }));
 
         setAssetUrlDraft(prev => ({ ...prev, [type]: '' }));
         addToast('已应用图床图片', 'success');
@@ -865,7 +868,7 @@ const ThemeMaker: React.FC = () => {
 
     const renderPreviewBubble = (mock: PreviewMockMessage, theme: ChatTheme, panel: 'A' | 'B') => {
         const role = mock.role;
-        const style = role === 'user' ? theme.user : theme.ai;
+        const style = visibleAvatarStyle(role === 'user' ? theme.user : theme.ai);
         const isUser = role === 'user';
         const isActive = panel === 'A' && (activeTab === role || activeTab === 'css');
         
@@ -1162,7 +1165,7 @@ const ThemeMaker: React.FC = () => {
                     <div className="flex px-6 border-b border-slate-100 mb-2 overflow-x-auto no-scrollbar">
                         <button onClick={() => requestToolSectionSwitch('base')} className={`px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all shrink-0 ${toolSection === 'base' ? 'border-primary text-primary' : 'border-transparent text-slate-400'}`}>基础样式</button>
                         <button onClick={() => requestToolSectionSwitch('sticker')} className={`px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all shrink-0 ${toolSection === 'sticker' ? 'border-primary text-primary' : 'border-transparent text-slate-400'}`}>气泡贴纸</button>
-                        <button onClick={() => requestToolSectionSwitch('avatar')} className={`px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all shrink-0 ${toolSection === 'avatar' ? 'border-primary text-primary' : 'border-transparent text-slate-400'}`}>头像挂件</button>
+                        <button onClick={() => requestToolSectionSwitch('avatar')} className={`px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all shrink-0 ${toolSection === 'avatar' ? 'border-primary text-primary' : 'border-transparent text-slate-400'}`}>头像框 / 挂件</button>
                     </div>
                 )}
 
@@ -1498,43 +1501,16 @@ const ThemeMaker: React.FC = () => {
                     {/* --- AVATAR TOOLS --- */}
                     {activeTab !== 'css' && toolSection === 'avatar' && (
                         <div className="space-y-6 animate-fade-in">
-                            <div onClick={() => avatarDecoInputRef.current?.click()} className="cursor-pointer group relative h-20 bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-400 hover:border-primary/50 hover:text-primary transition-all">
-                                 {activeStyle.avatarDecoration ? <img src={activeStyle.avatarDecoration} className="h-10 w-10 object-contain" /> : <span className="text-xs font-bold">+ 上传头像框/挂件</span>}
-                                 <input type="file" ref={avatarDecoInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && handleImageUpload(e.target.files[0], 'avatarDeco')} />
-                                 {activeStyle.avatarDecoration && <button onClick={(e) => { e.stopPropagation(); updateStyle('avatarDecoration', undefined); }} className="absolute top-2 right-2 text-[10px] bg-red-100 text-red-500 px-2 py-0.5 rounded-full">移除</button>}
+                            <AvatarFrameEditor
+                                style={activeStyle}
+                                avatar={activeTab === 'user' ? userProfile.avatar : characters[0]?.avatar}
+                                onChange={(patch) => updateTheme(prev => ({ ...prev, [activeTab]: { ...prev[activeTab as 'user' | 'ai'], ...patch }, ...(userFollowAi && activeTab === 'ai' ? { user: { ...prev.user, ...patch } } : {}) }))}
+                                onError={(message) => addToast(message, 'error')}
+                            />
+                            <div className="flex gap-2">
+                                <input type="url" value={assetUrlDraft.avatarDeco} onChange={e => setAssetUrlDraft(prev => ({ ...prev, avatarDeco: e.target.value }))} placeholder="或粘贴透明头像框图床 URL" className="min-w-0 flex-1 rounded-lg border p-2 text-xs" />
+                                <button onClick={() => handleUrlApply('avatarDeco')} className="px-3 text-xs">应用</button>
                             </div>
-                            <div className="flex gap-2 -mt-4">
-                                <input
-                                    type="url"
-                                    value={assetUrlDraft.avatarDeco}
-                                    onChange={(e) => setAssetUrlDraft(prev => ({ ...prev, avatarDeco: e.target.value }))}
-                                    placeholder="或粘贴挂件图床 URL"
-                                    className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 focus:outline-none focus:ring-2 focus:ring-primary/30"
-                                />
-                                <button onClick={() => handleUrlApply('avatarDeco')} className="px-3 py-2 rounded-lg bg-slate-100 text-xs font-semibold text-slate-600 hover:bg-slate-200">应用</button>
-                            </div>
-
-                            {activeStyle.avatarDecoration && (
-                                <details className="rounded-xl border border-slate-200 bg-slate-50 p-3" open={showAdvancedSettings}>
-                                    <summary onClick={(e) => { e.preventDefault(); setShowAdvancedSettings(prev => !prev); }} className="text-xs font-semibold text-slate-600 cursor-pointer">高级设置 · 挂件偏移与旋转</summary>
-                                    {showAdvancedSettings && (
-                                        <div className="grid grid-cols-2 gap-x-6 gap-y-6 pt-4">
-                                            <div className="col-span-2"><label className="text-[10px] text-slate-400 uppercase block mb-2">中心偏移 (Offset X / Y)</label>
-                                                <div className="flex gap-3">
-                                                    <input type="range" min="-50" max="150" value={activeStyle.avatarDecorationX ?? 50} onChange={(e) => updateStyle('avatarDecorationX', parseInt(e.target.value))} className="flex-1 h-1.5 bg-slate-200 rounded-full accent-primary" />
-                                                    <input type="range" min="-50" max="150" value={activeStyle.avatarDecorationY ?? 50} onChange={(e) => updateStyle('avatarDecorationY', parseInt(e.target.value))} className="flex-1 h-1.5 bg-slate-200 rounded-full accent-primary" />
-                                                </div>
-                                            </div>
-                                            <div><label className="text-[10px] text-slate-400 uppercase block mb-2">缩放 ({activeStyle.avatarDecorationScale ?? 1}x)</label>
-                                                <input type="range" min="0.5" max="3" step="0.1" value={activeStyle.avatarDecorationScale ?? 1} onChange={(e) => updateStyle('avatarDecorationScale', parseFloat(e.target.value))} className="w-full h-1.5 bg-slate-200 rounded-full accent-primary" />
-                                            </div>
-                                            <div><label className="text-[10px] text-slate-400 uppercase block mb-2">旋转 ({activeStyle.avatarDecorationRotate ?? 0}°)</label>
-                                                <input type="range" min="-180" max="180" value={activeStyle.avatarDecorationRotate ?? 0} onChange={(e) => updateStyle('avatarDecorationRotate', parseInt(e.target.value))} className="w-full h-1.5 bg-slate-200 rounded-full accent-primary" />
-                                            </div>
-                                        </div>
-                                    )}
-                                </details>
-                            )}
                         </div>
                     )}
 

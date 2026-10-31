@@ -1,3 +1,5 @@
+import { isHalloweenActive, useHalloweenActive } from '../utils/halloweenEvent';
+import HalloweenOpeningNotice from './HalloweenOpeningNotice';
 
 
 
@@ -228,8 +230,9 @@ class AppErrorBoundary extends Component<{ children: React.ReactNode, onCloseApp
 */
 
 const DISCLAIMER_KEY = 'sullyos_disclaimer_accepted';
-const MORPHO_OPENING_NOTICE_KEY = 'morpho_opening_notice_ack';
-const MORPHO_OPENING_NOTICE_VERSION = '2026-09-v1';
+const isHalloweenOpening = isHalloweenActive();
+const MORPHO_OPENING_NOTICE_KEY = isHalloweenOpening ? 'morpho_halloween_2026_ack' : 'morpho_opening_notice_ack';
+const MORPHO_OPENING_NOTICE_VERSION = isHalloweenOpening ? '2026-halloween-v1' : '2026-09-v1';
 
 type ImportRecoveryMarker = {
   startedAt?: number;
@@ -569,6 +572,7 @@ const PhoneShell: React.FC = () => {
   };
 
   // Morpho 自有开屏通知：按版本确认。日后只需更新 VERSION，所有用户会再看到一次新版通知。
+  const halloweenActive = useHalloweenActive();
   const [showMorphoOpeningNotice, setShowMorphoOpeningNotice] = useState(() => {
     try {
       return !!localStorage.getItem(DISCLAIMER_KEY)
@@ -579,7 +583,8 @@ const PhoneShell: React.FC = () => {
   });
 
   useEffect(() => {
-    if (showDisclaimer || showMorphoOpeningNotice) return;
+    if (isHalloweenOpening && !halloweenActive) { setShowMorphoOpeningNotice(false); return; }
+    if (showDisclaimer || showMorphoOpeningNotice || openingNoticeDismissed.current) return;
     try {
       if (localStorage.getItem(MORPHO_OPENING_NOTICE_KEY) !== MORPHO_OPENING_NOTICE_VERSION) {
         setShowMorphoOpeningNotice(true);
@@ -587,9 +592,11 @@ const PhoneShell: React.FC = () => {
     } catch {
       setShowMorphoOpeningNotice(true);
     }
-  }, [showDisclaimer, showMorphoOpeningNotice]);
+  }, [showDisclaimer, showMorphoOpeningNotice, halloweenActive]);
 
+  const openingNoticeDismissed = React.useRef(false);
   const handleAcceptMorphoOpeningNotice = () => {
+    openingNoticeDismissed.current = true;
     try {
       localStorage.setItem(MORPHO_OPENING_NOTICE_KEY, MORPHO_OPENING_NOTICE_VERSION);
     } catch { /* ignore */ }
@@ -1012,8 +1019,8 @@ const PhoneShell: React.FC = () => {
        )}
 
        {/* Morpho 自有开屏通知：每个通知版本只确认一次 */}
-       {!showDisclaimer && !showImportRecoveryPrompt && showMorphoOpeningNotice && (
-         <MorphoOpeningNotice onAccept={handleAcceptMorphoOpeningNotice} />
+       {!showDisclaimer && !showImportRecoveryPrompt && showMorphoOpeningNotice && (!isHalloweenOpening || halloweenActive) && (
+         isHalloweenOpening ? <HalloweenOpeningNotice onAccept={handleAcceptMorphoOpeningNotice} /> : <MorphoOpeningNotice onAccept={handleAcceptMorphoOpeningNotice} />
        )}
 
        {/* Version update popup (2026-04) — forced until acknowledged */}

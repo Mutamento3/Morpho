@@ -716,6 +716,7 @@ export interface BubbleStyle {
     decorationRotate?: number;
 
     avatarDecoration?: string;
+    avatarDecorationEvent?: 'halloween-2026';
     avatarDecorationX?: number;
     avatarDecorationY?: number;
     avatarDecorationScale?: number;

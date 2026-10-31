@@ -1,3 +1,4 @@
+import { useHalloweenActive, visibleAvatarStyle } from '../../utils/halloweenEvent';
 import WorkDocumentCard from './WorkDocumentCard';
 
 
@@ -1480,7 +1481,8 @@ const MessageItem = React.memo(({
     const replyGestureActiveRef = useRef(false);
     const replyReadyRef = useRef(false);
 
-    const styleConfig = isUser ? activeTheme.user : activeTheme.ai;
+    useHalloweenActive();
+    const styleConfig = visibleAvatarStyle(isUser ? activeTheme.user : activeTheme.ai);
     const [showVoiceText, setShowVoiceText] = useState(false);
     const [replyOffset, setReplyOffset] = useState(0);
     const [isReplyGestureActive, setIsReplyGestureActive] = useState(false);
